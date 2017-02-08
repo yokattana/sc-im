@@ -1,0 +1,13 @@
+language: c
+script: cd src && make
+
+matrix:
+  include:
+
+  # Linux / gcc
+  - compiler: gcc
+
+  # Mac
+  - compiler: clang
+    os: osx
+    script: cd src && make CC=clang MACOSX=-DMACOSX LINUX=
