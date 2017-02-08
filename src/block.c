@@ -79,21 +79,3 @@ int replace_block_in_block (struct block * olist, struct block * in, struct bloc
 
     return 0;
 }
-
-/* NOT USED
-void block_to_str(struct block * b, char * out) {
-    struct block * b_aux = b;
-
-    if (b_aux == NULL || b_aux->value == '\0') return;
-
-    while (b_aux != NULL) {
-        if (b_aux->value > 31 && b_aux->value < 127) {
-           add_char(out, (char) b_aux->value, strlen(out));
-        } else if (b_aux->value == 27) {
-           return;
-        }
-        b_aux = b_aux->pnext;
-    }
-    return;
-}
-*/
