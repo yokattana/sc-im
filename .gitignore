@@ -1,6 +1,7 @@
+*.swp
 scim
 *.o
 experres.h
-gram.c
 statres.h
 y.tab.h
+gram.c
