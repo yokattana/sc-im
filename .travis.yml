@@ -7,7 +7,5 @@ matrix:
   # Linux / gcc
   - compiler: gcc
 
-  ## Mac (disabled for now, need to provision ncursesw)
-  #- compiler: clang
-  #  os: osx
-  #  script: cd src && make CC=clang MACOSX=-DMACOSX LINUX=
+  ## Mac
+  - os: osx
