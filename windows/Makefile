@@ -1,3 +1,4 @@
+CFLAGS += -std=c99
 LDLIBS += -lkernel32 -luser32 -lgdi32 -lcomdlg32
 
 all: SC.exe

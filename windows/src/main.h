@@ -1,6 +1,6 @@
 #pragma once
 
-#include <Windows.h>
+#include <windows.h>
 #include <tchar.h>
 
 #define SC_TITLE _T("Calculating Spreadsheet")
