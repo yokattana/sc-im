@@ -29,7 +29,7 @@ static LRESULT CALLBACK OnFileOpen(HWND wnd, UINT msg, WPARAM wParam,
     SC_CHECK(ctx, "Failed to get window context");
 
     TCHAR path[4096];
-    _tcscpy_s(path, _countof(path), ctx->filePath);
+    _sntprintf(path, _countof(path), "%s", ctx->filePath);
     
     OPENFILENAME ofn = {0};
     ofn.lStructSize = sizeof(ofn);
@@ -44,9 +44,10 @@ static LRESULT CALLBACK OnFileOpen(HWND wnd, UINT msg, WPARAM wParam,
     if (!GetOpenFileName(&ofn))
         return 0;
 
+    _sntprintf(ctx->filePath, _countof(ctx->filePath), "%s", ctx->filePath);
+
     TCHAR title[1024];
-    _tcscpy_s(ctx->filePath, _countof(ctx->filePath), path);
-    _stprintf_s(title, _countof(title),
+    _sntprintf(title, _countof(title),
         _T("%s - ") SC_TITLE, path + ofn.nFileOffset);
     SetWindowText(wnd, title);
     
