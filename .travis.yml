@@ -8,13 +8,13 @@ matrix:
   - compiler: gcc
 
   # Linux / MinGW 32 bit
-  - compiler: g++-mingw-w64-i686
-    addons: {apt: {packages: [g++-mingw-w64-i686]}}
+  - compiler: gcc-mingw-w64-i686
+    addons: {apt: {packages: [gcc-mingw-w64-i686]}}
     script: cd windows && make
 
   # Linux / MinGW 64 bit
-  - compiler: g++-mingw-w64-x86-64
-    addons: {apt: {packages: [g++-mingw-w64-x86-64]}}
+  - compiler: gcc-mingw-w64-x86-64
+    addons: {apt: {packages: [gcc-mingw-w64-x86-64]}}
     script: cd windows && make
 
   ## Mac (disabled for now, need to provision ncursesw)
