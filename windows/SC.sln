@@ -1,0 +1,64 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio 15
+VisualStudioVersion = 15.0.26206.0
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "SC", "SC.vcxproj", "{704CC77C-F880-4219-BEAB-A8DB2E24979F}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug (clang)|x64 = Debug (clang)|x64
+		Debug (clang)|x86 = Debug (clang)|x86
+		Debug (multibyte)|x64 = Debug (multibyte)|x64
+		Debug (multibyte)|x86 = Debug (multibyte)|x86
+		Debug (XP)|x64 = Debug (XP)|x64
+		Debug (XP)|x86 = Debug (XP)|x86
+		Debug|x64 = Debug|x64
+		Debug|x86 = Debug|x86
+		Release (clang)|x64 = Release (clang)|x64
+		Release (clang)|x86 = Release (clang)|x86
+		Release (multibyte)|x64 = Release (multibyte)|x64
+		Release (multibyte)|x86 = Release (multibyte)|x86
+		Release (XP)|x64 = Release (XP)|x64
+		Release (XP)|x86 = Release (XP)|x86
+		Release|x64 = Release|x64
+		Release|x86 = Release|x86
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{704CC77C-F880-4219-BEAB-A8DB2E24979F}.Debug (clang)|x64.ActiveCfg = Debug (clang)|x64
+		{704CC77C-F880-4219-BEAB-A8DB2E24979F}.Debug (clang)|x64.Build.0 = Debug (clang)|x64
+		{704CC77C-F880-4219-BEAB-A8DB2E24979F}.Debug (clang)|x86.ActiveCfg = Debug (clang)|Win32
+		{704CC77C-F880-4219-BEAB-A8DB2E24979F}.Debug (clang)|x86.Build.0 = Debug (clang)|Win32
+		{704CC77C-F880-4219-BEAB-A8DB2E24979F}.Debug (multibyte)|x64.ActiveCfg = Debug (multibyte)|x64
+		{704CC77C-F880-4219-BEAB-A8DB2E24979F}.Debug (multibyte)|x64.Build.0 = Debug (multibyte)|x64
+		{704CC77C-F880-4219-BEAB-A8DB2E24979F}.Debug (multibyte)|x86.ActiveCfg = Debug (multibyte)|Win32
+		{704CC77C-F880-4219-BEAB-A8DB2E24979F}.Debug (multibyte)|x86.Build.0 = Debug (multibyte)|Win32
+		{704CC77C-F880-4219-BEAB-A8DB2E24979F}.Debug (XP)|x64.ActiveCfg = Debug (XP)|x64
+		{704CC77C-F880-4219-BEAB-A8DB2E24979F}.Debug (XP)|x64.Build.0 = Debug (XP)|x64
+		{704CC77C-F880-4219-BEAB-A8DB2E24979F}.Debug (XP)|x86.ActiveCfg = Debug (XP)|Win32
+		{704CC77C-F880-4219-BEAB-A8DB2E24979F}.Debug (XP)|x86.Build.0 = Debug (XP)|Win32
+		{704CC77C-F880-4219-BEAB-A8DB2E24979F}.Debug|x64.ActiveCfg = Debug|x64
+		{704CC77C-F880-4219-BEAB-A8DB2E24979F}.Debug|x64.Build.0 = Debug|x64
+		{704CC77C-F880-4219-BEAB-A8DB2E24979F}.Debug|x86.ActiveCfg = Debug|Win32
+		{704CC77C-F880-4219-BEAB-A8DB2E24979F}.Debug|x86.Build.0 = Debug|Win32
+		{704CC77C-F880-4219-BEAB-A8DB2E24979F}.Release (clang)|x64.ActiveCfg = Release (clang)|x64
+		{704CC77C-F880-4219-BEAB-A8DB2E24979F}.Release (clang)|x64.Build.0 = Release (clang)|x64
+		{704CC77C-F880-4219-BEAB-A8DB2E24979F}.Release (clang)|x86.ActiveCfg = Release (clang)|Win32
+		{704CC77C-F880-4219-BEAB-A8DB2E24979F}.Release (clang)|x86.Build.0 = Release (clang)|Win32
+		{704CC77C-F880-4219-BEAB-A8DB2E24979F}.Release (multibyte)|x64.ActiveCfg = Release (multibyte)|x64
+		{704CC77C-F880-4219-BEAB-A8DB2E24979F}.Release (multibyte)|x64.Build.0 = Release (multibyte)|x64
+		{704CC77C-F880-4219-BEAB-A8DB2E24979F}.Release (multibyte)|x86.ActiveCfg = Release (multibyte)|Win32
+		{704CC77C-F880-4219-BEAB-A8DB2E24979F}.Release (multibyte)|x86.Build.0 = Release (multibyte)|Win32
+		{704CC77C-F880-4219-BEAB-A8DB2E24979F}.Release (XP)|x64.ActiveCfg = Release (XP)|x64
+		{704CC77C-F880-4219-BEAB-A8DB2E24979F}.Release (XP)|x64.Build.0 = Release (XP)|x64
+		{704CC77C-F880-4219-BEAB-A8DB2E24979F}.Release (XP)|x86.ActiveCfg = Release (XP)|Win32
+		{704CC77C-F880-4219-BEAB-A8DB2E24979F}.Release (XP)|x86.Build.0 = Release (XP)|Win32
+		{704CC77C-F880-4219-BEAB-A8DB2E24979F}.Release|x64.ActiveCfg = Release|x64
+		{704CC77C-F880-4219-BEAB-A8DB2E24979F}.Release|x64.Build.0 = Release|x64
+		{704CC77C-F880-4219-BEAB-A8DB2E24979F}.Release|x86.ActiveCfg = Release|Win32
+		{704CC77C-F880-4219-BEAB-A8DB2E24979F}.Release|x86.Build.0 = Release|Win32
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+EndGlobal

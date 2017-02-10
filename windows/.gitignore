@@ -1,0 +1,5 @@
+bin/
+build/
+.vs/
+*.VC.db
+*.APS
