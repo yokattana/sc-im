@@ -7,7 +7,7 @@ matrix:
   # Linux / gcc
   - compiler: gcc
 
-  # Linux / MinGW 32 bit
+  # Windows GUI on Linux / MinGW 32 bit
   - addons:
       apt:
         packages:
@@ -16,7 +16,7 @@ matrix:
     compiler: i686-w64-mingw32-gcc
     script: cd windows && make
 
-  # Linux / MinGW 64 bit
+  # Windows GUI on Linux / MinGW 64 bit
   - addons:
       apt:
         packages:
