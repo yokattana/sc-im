@@ -14,6 +14,7 @@ matrix:
         - binutils-mingw-w64-i686
         - gcc-mingw-w64-i686
     compiler: i686-w64-mingw32-gcc
+    env: [WINDRES=i686-w64-mingw32-windres]
     script: cd windows && make
 
   # Windows GUI on Linux / MinGW 64 bit
@@ -23,6 +24,7 @@ matrix:
         - binutils-mingw-w64-x86-64
         - gcc-mingw-w64-x86-64
     compiler: x86_64-w64-mingw32-gcc
+    env: [WINDRES=x86-64-w64-mingw32-windres]
     script: cd windows && make
 
   ## Mac (disabled for now, need to provision ncursesw)
