@@ -24,7 +24,7 @@ matrix:
         - binutils-mingw-w64-x86-64
         - gcc-mingw-w64-x86-64
     compiler: x86_64-w64-mingw32-gcc
-    env: [WINDRES=x86-64-w64-mingw32-windres]
+    env: [WINDRES=x86_64-w64-mingw32-windres]
     script: cd windows && make
 
   ## Mac (disabled for now, need to provision ncursesw)
