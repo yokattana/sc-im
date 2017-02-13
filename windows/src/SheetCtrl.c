@@ -7,12 +7,33 @@
 #define GRID_BGCOLOR RGB(0xFF, 0xFF, 0xFF)
 #define GRID_LNCOLOR RGB(0xDD, 0xDD, 0xDD)
 
+#define CELLRECT(c,r,w,h) {c*w,r*h,c*w+w,r*h+h}
+
 static const LPCTSTR WndClass = _T("SCSheetCtrl");
 
 struct SheetCtrlCtx {
     HBRUSH gridBgBrush;
     HBRUSH gridLnBrush;
+    HFONT titleFont;
 };
+
+static LPTSTR GetColName(LPTSTR buf, size_t len, int col)
+{
+    if (!buf || len < 1) return NULL;
+    if (len == 1) { *buf = 0; return buf; }
+
+    buf[len-1] = 0;
+    buf[len-2] = 'A' + (col-1) % 26;
+
+    int remainder = (col-1) / 26;
+    LPTSTR start = buf + len-2;
+    while (start > buf && remainder > 0) {
+        *(--start) = 'A' + remainder % 26;
+        remainder /= 26;
+    }
+
+    return start;
+}
 
 static LRESULT CALLBACK OnPaint(HWND wnd, UINT msg, WPARAM wParam,
     LPARAM lParam)
@@ -22,6 +43,21 @@ static LRESULT CALLBACK OnPaint(HWND wnd, UINT msg, WPARAM wParam,
 
     if (!ctx->gridBgBrush) ctx->gridBgBrush = CreateSolidBrush(GRID_BGCOLOR);
     if (!ctx->gridLnBrush) ctx->gridLnBrush = CreateSolidBrush(GRID_LNCOLOR);
+
+    if (!ctx->titleFont) {
+        NONCLIENTMETRICS ncm = {0};
+        ncm.cbSize = sizeof(ncm);
+
+        SC_CHECK(
+            SystemParametersInfo(SPI_GETNONCLIENTMETRICS, ncm.cbSize, &ncm, 0),
+            _T("Failed to get metrics info"));
+
+        LOGFONT titleLf = ncm.lfMessageFont;
+        titleLf.lfWeight = 600;
+
+        ctx->titleFont = CreateFontIndirect(&titleLf);
+        SC_CHECK(ctx->titleFont, _T("Failed to create title font"));
+    }
 
     PAINTSTRUCT paint;
     HDC hdc = BeginPaint(wnd, &paint);
@@ -34,23 +70,42 @@ static LRESULT CALLBACK OnPaint(HWND wnd, UINT msg, WPARAM wParam,
 
     FillRect(hdc, &paint.rcPaint, ctx->gridBgBrush);
 
-    int startX = paint.rcPaint.left-1 + (-paint.rcPaint.left) % cellWidth;
-    int startY = paint.rcPaint.top-1 + (-paint.rcPaint.top) % cellHeight;
+    RECT range;
+    range.left   = paint.rcPaint.left / cellWidth;
+    range.top    = paint.rcPaint.top  / cellHeight;
+    range.right  = paint.rcPaint.right  / cellWidth  + 1;
+    range.bottom = paint.rcPaint.bottom / cellHeight + 1;
 
-    for (int x = startX; x < paint.rcPaint.right; x += cellWidth) {
+    for (int col = range.left; col <= range.right; col++) {
         RECT line = paint.rcPaint;
-        line.left = x;
+        line.left  = (col + 1) * cellWidth - 1;
         line.right = line.left + SC_PX(1, dpi);
 
         FillRect(hdc, &line, ctx->gridLnBrush);
     }
 
-    for (int y = startY; y < paint.rcPaint.bottom; y += cellHeight) {
+    for (int row = range.top; row <= range.bottom; row++) {
         RECT line = paint.rcPaint;
-        line.top = y;
+        line.top    = (row + 1) * cellHeight - 1;
         line.bottom = line.top + SC_PX(1, dpi);
 
         FillRect(hdc, &line, ctx->gridLnBrush);
+    }
+
+    SelectObject(hdc, ctx->titleFont);
+
+    for (int col = max(1, range.left); col <= range.right; col++) {
+        TCHAR buf[8];
+        LPTSTR text = GetColName(buf, _countof(buf), col);
+        RECT rect = CELLRECT(col, 0, cellWidth, cellHeight);
+        DrawText(hdc, text, -1, &rect, DT_CENTER);
+    }
+
+    for (int row = max(1, range.top); row <= range.bottom; row++) {
+        TCHAR buf[16];
+        _stprintf_s(buf, _countof(buf), _T("%d"), row);
+        RECT rect = CELLRECT(0, row, cellWidth, cellHeight);
+        DrawText(hdc, buf, -1, &rect, DT_CENTER);
     }
 
     EndPaint(wnd, &paint);
@@ -66,6 +121,7 @@ static LRESULT CALLBACK OnDestroy(HWND wnd, UINT msg, WPARAM wParam,
     if (ctx) {
         if (ctx->gridBgBrush) DeleteObject(ctx->gridBgBrush);
         if (ctx->gridLnBrush) DeleteObject(ctx->gridLnBrush);
+        if (ctx->titleFont) DeleteObject(ctx->titleFont);
 
         SetWindowLongPtr(wnd, GWLP_USERDATA, (LONG_PTR)NULL);
         free(ctx);
