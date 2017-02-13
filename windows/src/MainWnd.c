@@ -36,7 +36,8 @@ static LRESULT CALLBACK OnFileOpen(HWND wnd, UINT msg, WPARAM wParam,
     ofn.lStructSize = sizeof(ofn);
     ofn.hwndOwner = wnd;
     ofn.lpstrFilter =
-        _T("Spreadsheets (*.sc, *.xlsx, *.xls)\0*.sc;*.xlsx;*.xls\0")
+        _T("Spreadsheets (*.sc, *.xlsx, *.xls, *.csv, *.tsv, *.txt, *.tab)\0")
+        _T("*.sc;*.xlsx;*.xls;*.csv;*.tsv;*.txt;*.tab\0")
         _T("All files (*.*)\0*.*\0");
     ofn.lpstrFile = path;
     ofn.nMaxFile = sizeof(path);
