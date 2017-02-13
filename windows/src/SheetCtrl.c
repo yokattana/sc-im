@@ -9,14 +9,19 @@
 
 static const LPCTSTR WndClass = _T("SCSheetCtrl");
 
-static HBRUSH gridBgBrush = NULL;
-static HBRUSH gridLnBrush = NULL;
+struct SheetCtrlCtx {
+    HBRUSH gridBgBrush;
+    HBRUSH gridLnBrush;
+};
 
 static LRESULT CALLBACK OnPaint(HWND wnd, UINT msg, WPARAM wParam,
     LPARAM lParam)
 {
-    if (!gridBgBrush) gridBgBrush = CreateSolidBrush(GRID_BGCOLOR);
-    if (!gridLnBrush) gridLnBrush = CreateSolidBrush(GRID_LNCOLOR);
+    struct SheetCtrlCtx *ctx = (void*)GetWindowLongPtr(wnd, GWLP_USERDATA);
+    SC_CHECK(ctx, _T("Failed to get sheet control context"));
+
+    if (!ctx->gridBgBrush) ctx->gridBgBrush = CreateSolidBrush(GRID_BGCOLOR);
+    if (!ctx->gridLnBrush) ctx->gridLnBrush = CreateSolidBrush(GRID_LNCOLOR);
 
     PAINTSTRUCT paint;
     HDC hdc = BeginPaint(wnd, &paint);
@@ -27,7 +32,7 @@ static LRESULT CALLBACK OnPaint(HWND wnd, UINT msg, WPARAM wParam,
     int cellWidth = SC_PX(CELL_WIDTH, dpi);
     int cellHeight = SC_PX(CELL_HEIGHT, dpi);
 
-    FillRect(hdc, &paint.rcPaint, gridBgBrush);
+    FillRect(hdc, &paint.rcPaint, ctx->gridBgBrush);
 
     int startX = paint.rcPaint.left-1 + (-paint.rcPaint.left) % cellWidth;
     int startY = paint.rcPaint.top-1 + (-paint.rcPaint.top) % cellHeight;
@@ -37,7 +42,7 @@ static LRESULT CALLBACK OnPaint(HWND wnd, UINT msg, WPARAM wParam,
         line.left = x;
         line.right = line.left + SC_PX(1, dpi);
 
-        FillRect(hdc, &line, gridLnBrush);
+        FillRect(hdc, &line, ctx->gridLnBrush);
     }
 
     for (int y = startY; y < paint.rcPaint.bottom; y += cellHeight) {
@@ -45,12 +50,28 @@ static LRESULT CALLBACK OnPaint(HWND wnd, UINT msg, WPARAM wParam,
         line.top = y;
         line.bottom = line.top + SC_PX(1, dpi);
 
-        FillRect(hdc, &line, gridLnBrush);
+        FillRect(hdc, &line, ctx->gridLnBrush);
     }
 
     EndPaint(wnd, &paint);
 
     return 0;
+}
+
+static LRESULT CALLBACK OnDestroy(HWND wnd, UINT msg, WPARAM wParam,
+    LPARAM lParam)
+{
+    struct SheetCtrlCtx *ctx = (void*)GetWindowLongPtr(wnd, GWLP_USERDATA);
+
+    if (ctx) {
+        if (ctx->gridBgBrush) DeleteObject(ctx->gridBgBrush);
+        if (ctx->gridLnBrush) DeleteObject(ctx->gridLnBrush);
+
+        SetWindowLongPtr(wnd, GWLP_USERDATA, (LONG_PTR)NULL);
+        free(ctx);
+    }
+
+    return DefWindowProc(wnd, msg, wParam, lParam);
 }
 
 static LRESULT CALLBACK WndProc(HWND wnd, UINT msg, WPARAM wParam,
@@ -60,6 +81,7 @@ static LRESULT CALLBACK WndProc(HWND wnd, UINT msg, WPARAM wParam,
 
     switch (msg) {
     case WM_PAINT: handler = OnPaint; break;
+    case WM_DESTROY: handler = OnDestroy; break;
     default: handler = DefWindowProc; break;
     }
 
@@ -72,6 +94,7 @@ HWND SCCreateSheetCtrl(HINSTANCE hInstance, HWND parent, RECT rect)
     if (!registered) {
         WNDCLASSEX wc = {0};
         wc.cbSize = sizeof(wc);
+        wc.cbWndExtra = sizeof(LONG_PTR);
         wc.hCursor = LoadCursor(NULL, IDC_ARROW);
         wc.lpszClassName = WndClass;
         wc.lpfnWndProc = WndProc;
@@ -88,7 +111,11 @@ HWND SCCreateSheetCtrl(HINSTANCE hInstance, HWND parent, RECT rect)
         rect.left, rect.top,
         rect.right - rect.left, rect.bottom - rect.top,
         parent, NULL, hInstance, NULL);
+
     SC_CHECK(wnd, _T("Failed to create sheet control"));
+
+    struct SheetCtrlCtx *ctx = calloc(1, sizeof(struct SheetCtrlCtx));
+    SetWindowLongPtr(wnd, GWLP_USERDATA, (LONG_PTR)ctx);
 
     return wnd;
 }
