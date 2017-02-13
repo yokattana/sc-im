@@ -2,6 +2,7 @@
 
 #include <stdio.h>
 #include <tchar.h>
+#include "compat.h"
 #include "resource.h"
 
 struct MainWndCtx {
