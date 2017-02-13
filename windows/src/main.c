@@ -1,5 +1,4 @@
 #include "main.h"
-#include "compat.h"
 #include "resource.h"
 
 void SCAbort(LPCTSTR message)

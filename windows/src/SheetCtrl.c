@@ -1,5 +1,4 @@
 #include "main.h"
-#include "compat.h"
 
 #define CELL_WIDTH 65
 #define CELL_HEIGHT 20

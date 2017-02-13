@@ -1,7 +1,7 @@
 #pragma once
 
 #include <windows.h>
-#include <tchar.h>
+#include "compat.h"
 
 #define SC_TITLE _T("Calculating Spreadsheet")
 #define SC_PX(x, dpi) ((int)(x * (dpi / 96.0)))
