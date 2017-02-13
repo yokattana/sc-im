@@ -105,6 +105,7 @@ static LRESULT CALLBACK OnPaint(HWND wnd, UINT msg, WPARAM wParam,
         TCHAR buf[8];
         LPTSTR text = GetColName(buf, _countof(buf), col);
         RECT rect = CELLRECT(col, 0, cellWidth, cellHeight);
+        InflateRect(&rect, -2, -1);
         DrawText(hdc, text, -1, &rect, DT_CENTER);
     }
 
@@ -112,6 +113,7 @@ static LRESULT CALLBACK OnPaint(HWND wnd, UINT msg, WPARAM wParam,
         TCHAR buf[16];
         _stprintf_s(buf, _countof(buf), _T("%d"), row);
         RECT rect = CELLRECT(0, row, cellWidth, cellHeight);
+        InflateRect(&rect, -2, -1);
         DrawText(hdc, buf, -1, &rect, DT_CENTER);
     }
 
@@ -120,6 +122,7 @@ static LRESULT CALLBACK OnPaint(HWND wnd, UINT msg, WPARAM wParam,
     for (int col = max(1, range.left); col <= range.right; col++)
     for (int row = max(1, range.top); row <= range.bottom; row++) {
         RECT rect = CELLRECT(col, row, cellWidth, cellHeight);
+        InflateRect(&rect, -2, -1);
         DrawText(hdc, _T("Something"), -1, &rect, DT_LEFT);
     }
 
