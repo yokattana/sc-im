@@ -82,6 +82,7 @@ static LRESULT CALLBACK OnDestroy(HWND wnd, UINT msg, WPARAM wParam,
     
     if (ctx) {
         SetWindowLongPtr(wnd, GWLP_USERDATA, (LONG_PTR)NULL);
+        free(ctx);
     }
 
     PostQuitMessage(0);
