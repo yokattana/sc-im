@@ -14,6 +14,7 @@ struct SheetCtrlCtx {
     HBRUSH gridBgBrush;
     HBRUSH gridLnBrush;
     HFONT titleFont;
+    HFONT cellFont;
 };
 
 static LPTSTR GetColName(LPTSTR buf, size_t len, int col)
@@ -43,7 +44,7 @@ static LRESULT CALLBACK OnPaint(HWND wnd, UINT msg, WPARAM wParam,
     if (!ctx->gridBgBrush) ctx->gridBgBrush = CreateSolidBrush(GRID_BGCOLOR);
     if (!ctx->gridLnBrush) ctx->gridLnBrush = CreateSolidBrush(GRID_LNCOLOR);
 
-    if (!ctx->titleFont) {
+    if (!ctx->titleFont || !ctx->cellFont) {
         NONCLIENTMETRICS ncm = {0};
         ncm.cbSize = sizeof(ncm);
 
@@ -51,11 +52,18 @@ static LRESULT CALLBACK OnPaint(HWND wnd, UINT msg, WPARAM wParam,
             SystemParametersInfo(SPI_GETNONCLIENTMETRICS, ncm.cbSize, &ncm, 0),
             _T("Failed to get metrics info"));
 
-        LOGFONT titleLf = ncm.lfMessageFont;
-        titleLf.lfWeight = 600;
+        if (!ctx->titleFont) {
+            LOGFONT titleLf = ncm.lfMessageFont;
+            titleLf.lfWeight = 600;
+            
+            ctx->titleFont = CreateFontIndirect(&titleLf);
+            SC_CHECK(ctx->titleFont, _T("Failed to create title font"));
+        }
 
-        ctx->titleFont = CreateFontIndirect(&titleLf);
-        SC_CHECK(ctx->titleFont, _T("Failed to create title font"));
+        if (!ctx->cellFont) {
+            ctx->cellFont = CreateFontIndirect(&ncm.lfMessageFont);
+            SC_CHECK(ctx->titleFont, _T("Failed to create cell font"));
+        }
     }
 
     PAINTSTRUCT paint;
@@ -107,6 +115,14 @@ static LRESULT CALLBACK OnPaint(HWND wnd, UINT msg, WPARAM wParam,
         DrawText(hdc, buf, -1, &rect, DT_CENTER);
     }
 
+    SelectObject(hdc, ctx->cellFont);
+
+    for (int col = max(1, range.left); col <= range.right; col++)
+    for (int row = max(1, range.top); row <= range.bottom; row++) {
+        RECT rect = CELLRECT(col, row, cellWidth, cellHeight);
+        DrawText(hdc, _T("Something"), -1, &rect, DT_LEFT);
+    }
+
     EndPaint(wnd, &paint);
 
     return 0;
@@ -121,6 +137,7 @@ static LRESULT CALLBACK OnDestroy(HWND wnd, UINT msg, WPARAM wParam,
         if (ctx->gridBgBrush) DeleteObject(ctx->gridBgBrush);
         if (ctx->gridLnBrush) DeleteObject(ctx->gridLnBrush);
         if (ctx->titleFont) DeleteObject(ctx->titleFont);
+        if (ctx->cellFont) DeleteObject(ctx->cellFont);
 
         SetWindowLongPtr(wnd, GWLP_USERDATA, (LONG_PTR)NULL);
         free(ctx);
