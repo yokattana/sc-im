@@ -15,7 +15,7 @@ static LRESULT CALLBACK OnFileNew(HWND wnd, UINT msg, WPARAM wParam,
     LPARAM lParam)
 {
     struct MainWndCtx *ctx = (void*)GetWindowLongPtr(wnd, GWLP_USERDATA);
-    SC_CHECK(ctx, "Failed to get window context");
+    SC_CHECK(ctx, _T("Failed to get window context"));
 
     ctx->filePath[0] = 0;
     SetWindowText(wnd, SC_TITLE);
@@ -27,10 +27,10 @@ static LRESULT CALLBACK OnFileOpen(HWND wnd, UINT msg, WPARAM wParam,
     LPARAM lParam)
 {
     struct MainWndCtx *ctx = (void*)GetWindowLongPtr(wnd, GWLP_USERDATA);
-    SC_CHECK(ctx, "Failed to get window context");
+    SC_CHECK(ctx, _T("Failed to get window context"));
 
     TCHAR path[4096];
-    _sntprintf(path, _countof(path), "%s", ctx->filePath);
+    _sntprintf(path, _countof(path), _T("%s"), ctx->filePath);
     
     OPENFILENAME ofn = {0};
     ofn.lStructSize = sizeof(ofn);
@@ -46,7 +46,7 @@ static LRESULT CALLBACK OnFileOpen(HWND wnd, UINT msg, WPARAM wParam,
     if (!GetOpenFileName(&ofn))
         return 0;
 
-    _sntprintf(ctx->filePath, _countof(ctx->filePath), "%s", ctx->filePath);
+    _sntprintf(ctx->filePath, _countof(ctx->filePath), _T("%s"), ctx->filePath);
 
     TCHAR title[1024];
     _sntprintf(title, _countof(title),
