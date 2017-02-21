@@ -1,4 +1,7 @@
 *.swp
+*.vcxproj.user
+.vs
+
 scim
 *.o
 experres.h
