@@ -1,15 +1,15 @@
 #include <string.h>
 #include <stdio.h>
+#include <ctype.h>             // for isalpha toupper
+#include <stdlib.h>
+
 #include "macros.h"
-#include "screen.h"
-#include "color.h"
+#include "tui.h"
 #include "conf.h"
 #include "xmalloc.h"
 #include "filter.h"
 #include "math.h"
 #include "utils/string.h"
-#include <ctype.h>   //for isalpha toupper
-#include <stdlib.h>
 #include "sc.h"
 #include "cmds.h"
 
@@ -119,7 +119,7 @@ void show_filters() {
     }
 
     int i, size = 0;
-    char init_msg[100];
+    char init_msg[BUFFERSIZE];
     sprintf(init_msg, "Filters status: %s\nFilters:\n", active == 1 ? "ON" : "OFF");
 
     size += sizeof(init_msg);
@@ -133,7 +133,7 @@ void show_filters() {
     for (i=0; i < howmany; i++)
         if (filters[i].eval != NULL) sprintf(valores + strlen(valores), "%d + %s\n", i, filters[i].eval);
 
-    show_text(valores);
+    ui_show_text(valores);
     return;
 }
 
@@ -161,8 +161,11 @@ void del_filter(int id) {
     return;
 }
 
-// this functions checks if a filter was deleted, so there would be room in filters structure for a new filter
-// and preventing an unnecessary realloc.
+/*
+ * this functions checks if a filter was deleted, so there would be room
+ * in filters structure for a new filter
+ * and preventing an unnecessary realloc.
+ */
 int exists_freed_filter() {
     if (filters == NULL) return -1;
     int i;

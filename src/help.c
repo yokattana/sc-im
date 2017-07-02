@@ -1,22 +1,26 @@
+#ifdef NCURSES
 #include <ncurses.h>
 #include <unistd.h>
 #include <stdlib.h>
 #include <fcntl.h>
 #include <limits.h>
+
 #include "sc.h"
 #include "macros.h"
-#include "screen.h"
+#include "tui.h"
 #include "string.h"
-#include "color.h"
 #include "utils/string.h"
 #include "help.h"
 #include "conf.h"
 
 static char ** long_help;
 static int delta = 0;
-static int max; 
+static int max;
 static int look_result = -1;
 static char word_looked[50] = "";
+
+extern WINDOW * main_win;
+extern WINDOW * input_win;
 
 // Load the contents of help_doc into memory
 int load_help () {
@@ -98,7 +102,7 @@ void help() {
     wclrtobot(input_win);
     wrefresh(input_win);
 
-    set_ucolor(main_win, &ucolors[NORMAL]);
+    ui_set_ucolor(main_win, &ucolors[NORMAL]);
     wtimeout(input_win, -1);
     noecho();
     curs_set(0);
@@ -130,20 +134,30 @@ void help() {
             break;
 
         case ctl('b'):
+        case OKEY_PGUP:
             if (delta - LINES/2 > 0) delta -= LINES/2;
             else if (delta) delta = 0;
             break;
 
         case ctl('f'):
+        case OKEY_PGDOWN:
             if (delta + LINES + LINES/2 < max) delta += LINES/2;
             else if (max > delta + LINES) delta = max - 1 - LINES;
             break;
 
+        case OKEY_END:
         case 'G':
             delta = max - LINES + RESROW;
             break;
 
+        case 'g':
+            wtimeout(input_win, TIMEOUT_CURSES);
+            char c = wgetch(input_win);
+            wtimeout(input_win, -1);
+            if (c != 'g') break;
+
         case ctl('a'):
+        case OKEY_HOME:
             delta = 0;
             break;
 
@@ -175,7 +189,7 @@ void help() {
                 wrefresh(input_win);
                 d = wgetch(input_win);
             }
-            if (d == OKEY_ENTER && ( strcmp(hline, "q") == 0 || strcmp(hline, "quit") == 0 )) {
+            if (d == OKEY_ENTER && ( ! strcmp(hline, "q") || ! strcmp(hline, "quit") || ! strcmp(hline, "q!") )) {
                 quit_help_now = TRUE;
             } else if (d == OKEY_ESC) {
                 wmove(input_win, 0, rescol);
@@ -260,12 +274,12 @@ void find_word(char * word, char order) {
     if (look_result == -1) {
         sc_info("Pattern not found.");
     }
-    set_ucolor(input_win, &ucolors[NORMAL]);
+    ui_set_ucolor(input_win, &ucolors[NORMAL]);
     return;
 }
 
 int show_lines() {
-    int lineno, c = 0, bold = 0;
+    int lineno, i, k, key = 0, bold = 0 ;
 
     for (lineno = 0; long_help[lineno + delta] && lineno < LINES - RESROW; lineno++) {
         if (strlen(word_looked)) look_result = str_in_str(long_help[lineno + delta], word_looked);
@@ -273,18 +287,45 @@ int show_lines() {
         wmove(main_win, lineno, 0);
         wclrtoeol(main_win);
 
-        for (c = 0; c < strlen(long_help[lineno + delta]); c++)  {
-            if (long_help[lineno + delta][c] == '&') bold = ! bold;
-            bold ? set_ucolor(main_win, &ucolors[CELL_SELECTION_SC]) : set_ucolor(main_win, &ucolors[NORMAL]);
+        for (i=0; long_help[lineno + delta][i] != '\0'; i++) {
 
-            if (long_help[lineno + delta][c] == '&') {
-                  set_ucolor(main_win, &ucolors[NORMAL]);
-                continue;
-            } else if (look_result != -1 && c >= look_result &&
-                c < look_result + strlen(word_looked) ) {
-                  set_ucolor(main_win, &ucolors[CELL_SELECTION_SC]);
+            if (long_help[lineno + delta][i] == '&') bold = ! bold;
+
+            #ifdef USECOLORS
+            bold && ! key?
+            ui_set_ucolor(main_win, &ucolors[CELL_SELECTION_SC]) :
+            ui_set_ucolor(main_win, &ucolors[NORMAL]);
+            #endif
+
+            if (long_help[lineno + delta][i] == '<' || long_help[lineno + delta][i] == '{') {
+                // do not colorize if not '>' or '}' in line
+                for (key = 1, k=i; long_help[lineno + delta][k] != '\0'; k++) {
+                    if (long_help[lineno + delta][k] == '\'')        { key = 0; break; }
+                    else if (long_help[lineno + delta][k] == ';')    { key = 0; break; }
+                    else if (long_help[lineno + delta][k] == '>')    { break; }
+                    else if (long_help[lineno + delta][k] == '}')    { break; }
+                    else if (long_help[lineno + delta][k+1] == '\0') { key = 0; break; }
+                }
             }
-            mvwprintw(main_win, lineno, c, "%c", long_help[lineno + delta][c]);
+
+            if (long_help[lineno + delta][i] == '&') {
+                #ifdef USECOLORS
+                ui_set_ucolor(main_win, &ucolors[NORMAL]);
+                #endif
+                continue;
+            } else if (look_result != -1 && i >= look_result &&
+                i < look_result + strlen(word_looked) ) {
+                #ifdef USECOLORS
+                ui_set_ucolor(main_win, &ucolors[CELL_SELECTION_SC]);
+                #endif
+            } else if (key) {
+                #ifdef USECOLORS
+                ui_set_ucolor(main_win, &ucolors[NUMB]);
+                #endif
+            }
+
+            mvwprintw(main_win, lineno, i, "%c", long_help[lineno + delta][i]);
+            if (long_help[lineno + delta][i] == '>' || long_help[lineno + delta][i] == '}') key = 0;
         }
         wclrtoeol(main_win);
     }
@@ -296,3 +337,8 @@ int show_lines() {
     (void) wrefresh(main_win);
     return wgetch(input_win);
 }
+#else
+// implement this function if want to create another UI
+void help() {
+}
+#endif

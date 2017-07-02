@@ -4,7 +4,9 @@
 #include <stdio.h>
 #include <memory.h>
 
-#define ATBL(tbl, row, col)    (*(tbl + row) + (col))
+//#define ATBL(tbl, row, col)    (*(tbl + row) + (col))
+extern struct ent ** ATBL(struct ent ***,int ,int );
+
 #define MINROWS      100     /* minimum size at startup */
 
 /* MAX rows size of sheet. Default 65536.   */
@@ -31,13 +33,17 @@
 #define FBUFLEN     1024     /* buffer size for a single field */
 #define PATHLEN     1024     /* maximum path length */
 #define MAXCMD       160     /* for ! command and commands that use the pager */
+#define STDERRBUF   8192     /* stderr buffer size */
 
 #ifndef DFLT_PAGER
- #define    DFLT_PAGER "more"    /* more is probably more widespread than less */
+#define    DFLT_PAGER "more" /* more is probably more widespread than less */
 #endif                       /* DFLT_PAGER */
 
+#ifndef DFLT_EDITOR
+#define    DFLT_EDITOR "vim"
+#endif
 
-//#ifndef A_CHARTEXT           /* Should be defined in curses.h */
+//#ifndef A_CHARTEXT         /* Should be defined in curses.h */
 // #define A_CHARTEXT 0xff
 //#endif
 
@@ -67,11 +73,11 @@ struct ent {
     struct enode * expr;  /* cell's contents */
     short flags;
     int row, col;
-    //short nlastrow, nlastcol;
     struct ent * next;    // used for yanklist, freeents list, undo..
     char * format;        /* printf format for this cell */
     char cellerror;       /* error in a cell? */
     struct ucolor * ucolor;
+    struct trigger * trigger;
     int pad;              // padding between other cells
 };
 
@@ -227,8 +233,9 @@ struct go_save {
 #define CHR         (OP_BASE + 79)
 #define SET8BIT     (OP_BASE + 80)
 #define REPLACE     (OP_BASE + 81)
-#define FROW         (OP_BASE + 82)
-#define FCOL         (OP_BASE + 83)
+#define FROW        (OP_BASE + 82)
+#define FCOL        (OP_BASE + 83)
+#define LUA         (OP_BASE + 84)
 
 /* flag values */
 #define is_valid      0001
@@ -352,5 +359,4 @@ extern void label(register struct ent *v, register char *s, int flushdir);
 
 extern double eval_result;
 extern char * seval_result;
-void sc_msg(char * s, int type, ...);
 #endif // SC_H_

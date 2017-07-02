@@ -8,16 +8,37 @@
 void store_default_config_values() {
     put(user_conf_d, "half_page_scroll", "0");
     put(user_conf_d, "autocalc", "1");
-    put(user_conf_d, "numeric", "0");
+    put(user_conf_d, "numeric", "1");
     put(user_conf_d, "nocurses", "0");
-    put(user_conf_d, "newline_action", "0");
+    put(user_conf_d, "newline_action", "j");
     put(user_conf_d, "external_functions", "0");
     put(user_conf_d, "xlsx_readformulas", "0");
+    put(user_conf_d, "import_delimited_as_text", "0");
     put(user_conf_d, "quit_afterload", "0");
-    put(user_conf_d, "numeric_zero", "0");
-    put(user_conf_d, "numeric_decimal", "0");
+    put(user_conf_d, "numeric_zero", "1");
+    put(user_conf_d, "numeric_decimal", "1");
     put(user_conf_d, "overlap", "0");
     put(user_conf_d, "debug", "0");
+    put(user_conf_d, "ignorecase", "0");
+    put(user_conf_d, "trigger", "1");
+    put(user_conf_d, "version", "0");
+    #ifdef AUTOBACKUP
+    put(user_conf_d, "autobackup", "0"); // 0:noautobackup, n>0: backup every n in seconds
+    #endif
+
+    #ifdef DEFAULT_COPY_TO_CLIPBOARD_CMD
+    put(user_conf_d, "default_copy_to_clipboard_cmd", DEFAULT_COPY_TO_CLIPBOARD_CMD);
+    #else
+    put(user_conf_d, "default_copy_to_clipboard_cmd", "");
+    #endif
+
+    put(user_conf_d, "copy_to_clipboard_delimited_tab", "0");
+
+    #ifdef DEFAULT_PASTE_FROM_CLIPBOARD_CMD
+    put(user_conf_d, "default_paste_from_clipboard_cmd", DEFAULT_PASTE_FROM_CLIPBOARD_CMD);
+    #else
+    put(user_conf_d, "default_paste_from_clipboard_cmd", "");
+    #endif
 
     // we calc get gmtoffset
     #ifdef USELOCALE
@@ -39,6 +60,9 @@ char * get_conf_values(char * salida) {
    nl = user_conf_d->list;
    salida[0]='\0';
    while (nl != NULL) {
+       // ignore version conf variable here so that its not shown in :set command
+       if (! strcmp(nl->key, "version")) { nl = nl->next; continue; }
+
        sprintf(salida + strlen(salida), "%s=%s\n", nl->key, nl->val);
        nl = nl->next;
    }

@@ -25,8 +25,6 @@ void set_comp(int i) {
 }
 
 #if defined HISTORY_FILE
-
-#include <ncurses.h>
 #include <stdlib.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -34,7 +32,6 @@ void set_comp(int i) {
 #include "history.h"
 #include "sc.h"
 #include "utils/string.h"
-
 
 struct history * create_history(char mode) {
     struct history * h = (struct history *) malloc (sizeof (struct history));
@@ -59,7 +56,7 @@ void destroy_history(struct history * h) {
     return;
 }
 
-void load_history(struct history * h) {
+void load_history(struct history * h, wchar_t mode) {
     char infofile[PATHLEN];
     wchar_t linea[FBUFLEN];
     int c;
@@ -78,8 +75,10 @@ void load_history(struct history * h) {
                 int s = wcslen(linea)-1;
                 del_range_wchars(linea, s, s);
 
-                if (linea[0] == L':') {
+                if (linea[0] == mode && mode == L':') {
                     del_range_wchars(linea, 0, 0);
+                    add(h, linea);
+                } else if (mode != L':' && (linea[0] == L'=' || linea[0] == L'<' || linea[0] == L'>' || linea[0] == L'\\')) {
                     add(h, linea);
                 }
             }
@@ -92,8 +91,7 @@ void load_history(struct history * h) {
 
 // Save history to file
 // returns 0 on success, -1 otherwise
-int save_history(struct history * h) {
-    if (h->mode != ':' ) return -1;
+int save_history(struct history * h, char * mode) {
     char infofile [PATHLEN];
     char * home;
     FILE * f;
@@ -103,8 +101,8 @@ int save_history(struct history * h) {
     if ((home = getenv("HOME"))) {
         sprintf(infofile, "%s/", home);
         strcat(infofile, HISTORY_FILE);
-        f = fopen(infofile, "w");
-        if (f == NULL) return -1;
+        f = fopen(infofile, mode);
+        if (f == NULL) return 0;
 
         // Go to the end
         for (i=1; i < h->len; i++) {
@@ -112,14 +110,14 @@ int save_history(struct history * h) {
         }
         // Traverse list back to front, so the history is saved in chronological order
         for (i=0; i < h->len; i++) {
-            fwprintf(f, L":");
+            if (! strcmp(mode, "w")) fwprintf(f, L":"); // mode 'w' means we are saving the command mode history
             fwprintf(f, L"%ls\n", nl->line);
             nl = nl->pant;
         }
         fclose(f);
-        return 0;
+        return 1;
     }
-    return -1;
+    return 0;
 }
 
 // Remove history element
@@ -149,12 +147,15 @@ void del_item_from_history(struct history * h, int pos) {
     return;
 }
 
-// Find a history element and move it. Starts from POS
-// pos=0 first element, pos=-1 second element
-// returns 1 if moved, 0 otherwise.
+/*
+ * Find a history element and move it. Starts from POS
+ * pos=0 first element, pos=-1 second element
+ * returns 1 if moved, 0 otherwise.
+ */
 int move_item_from_history_by_str(struct history * h, wchar_t * item, int pos) {
     if (h->len - 1 < -pos || pos == 0 || ! wcslen(item)) return 0; // Move the first element is not allowed
     struct hlist * nl = h->list;
+    if (nl != NULL && !wcscmp(item, nl->line)) return 1;
     struct hlist * n_ant = NULL;
     int i;
 
@@ -203,8 +204,10 @@ void add(struct history * h, wchar_t * line) {
     return;
 }
 
-// Returns a history line from COMMAND_MODE
-// POS 0 is the most recent line
+/*
+ * Returns a history line from COMMAND_MODE
+ * POS 0 is the most recent line
+ */
 wchar_t * get_line_from_history(struct history * h, int pos) {
     return get_hlist_from_history(h, pos)->line;
 }

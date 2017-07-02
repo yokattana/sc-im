@@ -1,21 +1,21 @@
-#include <ncurses.h>
 #include <stdlib.h>
 #include <ctype.h>   // for isdigit
 #include <wchar.h>
 #include <wctype.h>
+#include "main.h"
 #include "maps.h"
 #include "yank.h"
 #include "marks.h"
 #include "cmds.h"
 #include "buffer.h"
-#include "screen.h"
+#include "tui.h"
 #include "conf.h"    // for conf parameters
-#include "color.h"   // for set_ucolor
 #include "xmalloc.h" // for scxfree
 #include "vmtbl.h"   // for growtbl
 #include "utils/string.h" // for add_char
 #include "y.tab.h"   // for yyparse
 #include "dep_graph.h"
+#include "freeze.h"
 #ifdef UNDO
 #include "undo.h"
 #endif
@@ -28,12 +28,18 @@ wchar_t interp_line[BUFFERSIZE];
 extern graphADT graph;
 extern int yyparse(void);
 
+// off screen spreadsheet rows and columns
+int offscr_sc_rows = 0, offscr_sc_cols = 0;
+int center_hidden_cols = 0;
+int center_hidden_rows = 0;
 
-// mark_ent_as_deleted
-// This structure is used to keep ent structs around before they
-// are actualy deleted (memory freed) to allow the sync_refs routine a chance to fix the
-// variable references.
-// if delete flag is set, is_deleted flag of an ent is set
+/*
+ * mark_ent_as_deleted
+ * This structure is used to keep ent structs around before they
+ * are actualy deleted (memory freed) to allow the sync_refs routine a chance to fix the
+ * variable references.
+ * if delete flag is set, is_deleted flag of an ent is set
+ */
 void mark_ent_as_deleted(register struct ent * p, int delete) {
     if (p == NULL) return;
     if (delete) p->flags |= is_deleted;
@@ -44,10 +50,12 @@ void mark_ent_as_deleted(register struct ent * p, int delete) {
     return;
 }
 
-// flush_saved: iterates throw freeents (ents marked as deleted)
-// calls clearent for freeing ents contents memory
-// and free ent pointer. this function should always be called
-// at exit. this is mandatory, just in case we want to UNDO any changes.
+/*
+ * flush_saved: iterates throw freeents (ents marked as deleted)
+ * calls clearent for freeing ents contents memory
+ * and free ent pointer. this function should always be called
+ * at exit. this is mandatory, just in case we want to UNDO any changes.
+ */
 void flush_saved() {
     register struct ent * p;
     register struct ent * q;
@@ -63,28 +71,26 @@ void flush_saved() {
     return;
 }
 
-// sync_refs and syncref are used to REMOVE references to
-// deleted struct ents.
-// Note that the deleted structure must still
-// be hanging around before the call, but not referenced
-// by an entry in tbl.
-// IMPROVE: Shouldn't traverse the whole table.
+/*
+ * sync_refs and syncref are used to REMOVE references to
+ * deleted struct ents.
+ * Note that the deleted structure must still
+ * be hanging around before the call, but not referenced
+ * by an entry in tbl.
+ * IMPROVE: Shouldn't traverse the whole table.
+ */
 void sync_refs() {
     int i, j;
     register struct ent * p;
-    // sync_ranges();
     for (i=0; i <= maxrow; i++)
     for (j=0; j <= maxcol; j++)
         if ( (p = *ATBL(tbl, i, j)) && p->expr ) {
-               syncref(p->expr);
-               //sc_info("%d %d %d", i, j, ++k);
-            }
+            syncref(p->expr);
+        }
     return;
 }
 
 void syncref(register struct enode * e) {
-    //if (e == (struct enode *)0) {
-    //
     if ( e == NULL ) {
         return;
     } else if ( e->op == ERR_ ) {
@@ -123,87 +129,120 @@ void syncref(register struct enode * e) {
     return;
 }
 
-// Delete a column
-void deletecol() {
-    int r, c, i;
-    struct ent ** pp;
-
-    if (any_locked_cells(0, curcol, maxrow, curcol)) {
-        sc_info("Locked cells encountered. Nothing changed");
+void deletecol(int col, int mult) {
+    if (any_locked_cells(0, col, maxrow, col + mult)) {
+        sc_error("Locked cells encountered. Nothing changed");
         return;
     }
+#ifdef UNDO
+    create_undo_action();
+    copy_to_undostruct(0, col, maxrow, col - 1 + mult, 'd');
+    save_undo_range_shift(0, -mult, 0, col, maxrow, col - 1 + mult);
 
-    // mark ent of column to erase with is_deleted flag
-    for (r = 0; r <= maxrow; r++) {
-        pp = ATBL(tbl, r, curcol);
-        if ( *pp != NULL ) {
-            mark_ent_as_deleted(*pp, TRUE);
-            //clearent(*pp);
-            //free(*pp);
-            *pp = NULL;
-        }
-    }
-
-    /*
+    // here we save in undostruct, all the ents that depends on the deleted one (before change)
     extern struct ent_ptr * deps;
-    int n = 0;
-    struct ent * p;
-    //ents_that_depends_on_range(0, curcol, maxrow, curcol);
-    if (deps != NULL) {
-         n = deps->vf;
-         for (i = 0; i < n; i++)
-             if ((p = *ATBL(tbl, deps[i].vp->row, deps[i].vp->col)) && p->expr)
-                 EvalJustOneVertex(p, deps[i].vp->row, deps[i].vp->col, 0);
-    }*/
-    EvalAll();
+    int i;
+    ents_that_depends_on_range(0, col, maxrow, col+mult);
+    for (i = 0; deps != NULL && i < deps->vf; i++)
+        copy_to_undostruct(deps[i].vp->row, deps[i].vp->col, deps[i].vp->row, deps[i].vp->col, 'd');
+    for (i=col; i < col + mult; i++)
+        add_undo_col_format(i, 'R', fwidth[i], precision[i], realfmt[i]);
+#endif
 
-    // Copy references from right column cells to left column (which gets removed)
-    for (r = 0; r <= maxrow; r++) {
-        for (c = curcol; c < maxcol; c++) {
-            pp = ATBL(tbl, r, c);
+    fix_marks(0, -mult, 0, maxrow,  col + mult -1, maxcol);
+    if (!loading) yank_area(0, col, maxrow, col + mult - 1, 'c', mult);
 
-            // nota: pp[1] = ATBL(tbl, r, c+1);
-            if ( pp[1] != NULL ) pp[1]->col--;
-            pp[0] = pp[1];
-        }
+    // do the job
+    int_deletecol(col, mult);
 
-        // Free last column memory (Could also initialize 'ent' to zero with `cleanent`).
-        pp = ATBL(tbl, r, maxcol);
-        *pp = (struct ent *) 0;
-    }
+    if (!loading) modflg++;
 
-    // Fix columns precision and width
-    for (i = curcol; i < maxcols - 2; i++) {
-        fwidth[i] = fwidth[i+1];
-        precision[i] = precision[i+1];
-        realfmt[i] = realfmt[i+1];
-        col_hidden[i] = col_hidden[i+1];
-    }
+#ifdef UNDO
+    // here we save in undostruct, all the ents that depends on the deleted one (after change)
+    for (i = 0; deps != NULL && i < deps->vf; i++) // TODO here save just ents that are off the shifted range
+        copy_to_undostruct(deps[i].vp->row, deps[i].vp->col, deps[i].vp->row, deps[i].vp->col, 'a');
 
-    for (; i < maxcols - 1; i++) {
-        fwidth[i] = DEFWIDTH;
-        precision[i] = DEFPREC;
-        realfmt[i] = DEFREFMT;
-        col_hidden[i] = FALSE;
-    }
+    if (deps != NULL) free(deps);
+    deps = NULL;
 
-    maxcol--;
-    sync_refs();
-    //flush_saved(); // we have to flush_saved only at exit.
-    //this is because we have to keep ents in case we want to UNDO?
-    modflg++;
+    end_undo_action();
+#endif
     return;
 }
 
-// Copy a cell (struct ent).  "special" indicates special treatment when
-// merging two cells for the "pm" command, merging formats only for the
-// "pf" command, or for adjusting cell references when transposing with
-// the "pt" command.  r1, c1, r2, and c2 define the range in which the dr
-// and dc values should be used.
-void copyent(register struct ent * n, register struct ent * p, int dr, int dc,
-             int r1, int c1, int r2, int c2, int special) {
+/*
+ * Delete a column - internal function
+ * parameters: col = col to delete, multi = cmds multiplier.(commonly 1)
+ */
+void int_deletecol(int col, int mult) {
+    register struct ent ** pp;
+    int r, c, i;
+
+    while (mult--) {
+        // mark ent of column to erase with is_deleted flag
+        for (r = 0; r <= maxrow; r++) {
+            pp = ATBL(tbl, r, col);
+            if ( *pp != NULL ) {
+                mark_ent_as_deleted(*pp, TRUE);
+                //clearent(*pp);
+                //free(*pp);
+                *pp = NULL;
+            }
+        }
+
+        EvalAll();
+
+        // Copy references from right column cells to left column (which gets removed)
+        for (r = 0; r <= maxrow; r++) {
+            for (c = col; c < maxcol; c++) {
+                pp = ATBL(tbl, r, c);
+
+                // nota: pp[1] = ATBL(tbl, r, c+1);
+                if ( pp[1] != NULL ) pp[1]->col--;
+                pp[0] = pp[1];
+            }
+
+            // Free last column memory (Could also initialize 'ent' to zero with `cleanent`).
+            pp = ATBL(tbl, r, maxcol);
+            *pp = (struct ent *) 0;
+        }
+
+        // Fix columns precision and width
+        for (i = col; i < maxcols - 2; i++) {
+            fwidth[i] = fwidth[i+1];
+            precision[i] = precision[i+1];
+            realfmt[i] = realfmt[i+1];
+            col_hidden[i] = col_hidden[i+1];
+        }
+
+        for (; i < maxcols - 1; i++) {
+            fwidth[i] = DEFWIDTH;
+            precision[i] = DEFPREC;
+            realfmt[i] = DEFREFMT;
+            col_hidden[i] = FALSE;
+        }
+
+        maxcol--;
+        sync_refs();
+        //flush_saved(); // we have to flush_saved only at exit.
+        //this is because we have to keep ents in case we want to UNDO?
+    }
+
+    return;
+}
+
+/* Copy a cell (struct ent).  "special" indicates special treatment when
+ * merging two cells for the "pm" command, merging formats only for the
+ * "pf" command, or for adjusting cell references when transposing with
+ * the "pt" command.  r1, c1, r2, and c2 define the range in which the dr
+ * and dc values should be used.
+ * special == 'u' means special copy from spreadsheet to undo struct.
+ * since its mandatory to make isolated copies of
+ * p->expr->e.o.right.e.v.vp and p->expr->e.o.right.e.v.vp
+ */
+void copyent(register struct ent * n, register struct ent * p, int dr, int dc, int r1, int c1, int r2, int c2, int special) {
     if (!n || !p) {
-        sc_error("internal error");
+        sc_error("copyent: internal error");
         return;
     }
 
@@ -216,13 +255,18 @@ void copyent(register struct ent * n, register struct ent * p, int dr, int dc,
             n->v = p->v;
             n->flags |= p->flags & is_valid;
         }
-        if (special != 'v' && p->expr) {
+        if (special != 'v' && p->expr && special != 'u') {
             n->expr = copye(p->expr, dr, dc, r1, c1, r2, c2, special == 't');
-            if (p->flags & is_strexpr)
-                n->flags |= is_strexpr;
-            else
-                n->flags &= ~is_strexpr;
+#ifdef UNDO
+        } else if (special == 'u' && p->expr) { // from spreadsheet to undo
+            n->expr = copye(p->expr, dr, dc, r1, c1, r2, c2, 2);
+#endif
         }
+        if (p->expr && p->flags & is_strexpr)
+            n->flags |= is_strexpr;
+        else if (p->expr)
+            n->flags &= ~is_strexpr;
+
         if (p->label) {
             if (n->label) scxfree(n->label);
                 n->label = scxmalloc((unsigned) (strlen(p->label) + 1));
@@ -276,7 +320,7 @@ int etype(register struct enode *e) {
     switch (e->op) {
         case UPPER: case LOWER: case CAPITAL:
         case O_SCONST: case '#': case DATE: case FMT: case STINDEX:
-        case EXT: case SVAL: case SUBSTR:
+        case EXT: case LUA: case SVAL: case SUBSTR:
             return (STR);
 
         case '?':
@@ -322,11 +366,13 @@ void erase_area(int sr, int sc, int er, int ec, int ignorelock, int mark_as_dele
         sc = 0;
     checkbounds(&er, &ec);
 
-    // mark the ent as deleted
-    // Do a lookat() for the upper left and lower right cells of the range
-    // being erased to make sure they are included in the delete buffer so
-    // that pulling cells always works correctly even if the cells at one
-    // or more edges of the range are all empty.
+    /*
+     * mark the ent as deleted
+     * Do a lookat() for the upper left and lower right cells of the range
+     * being erased to make sure they are included in the delete buffer so
+     * that pulling cells always works correctly even if the cells at one
+     * or more edges of the range are all empty.
+     */
     (void) lookat(sr, sc);
     (void) lookat(er, ec);
     for (r = sr; r <= er; r++) {
@@ -354,7 +400,12 @@ void erase_area(int sr, int sc, int er, int ec, int ignorelock, int mark_as_dele
     return;
 }
 
-struct enode * copye(register struct enode *e, int Rdelta, int Cdelta, int r1, int c1, int r2, int c2, int transpose) {
+/*
+ * function to copy an expression. it returns the copy.
+ * special = 1 means transpose
+ * special = 2 means copy from spreadsheet to undo struct
+ */
+struct enode * copye(register struct enode *e, int Rdelta, int Cdelta, int r1, int c1, int r2, int c2, int special) {
     register struct enode * ret;
     static struct enode * range = NULL;
 
@@ -363,46 +414,26 @@ struct enode * copye(register struct enode *e, int Rdelta, int Cdelta, int r1, i
 
     } else if (e->op & REDUCE) {
         int newrow, newcol;
-        //if (freeenodes) {
-        //    ret = freeenodes;
-        //    freeenodes = ret->e.o.left;
-        //} else
         ret = (struct enode *) scxmalloc((unsigned) sizeof (struct enode));
         ret->op = e->op;
-        newrow = e->e.r.left.vf & FIX_ROW ||
-        e->e.r.left.vp->row < r1 || e->e.r.left.vp->row > r2 ||
-        e->e.r.left.vp->col < c1 || e->e.r.left.vp->col > c2 ?
-        e->e.r.left.vp->row :
-        transpose ? r1 + Rdelta + e->e.r.left.vp->col - c1 :
-        e->e.r.left.vp->row + Rdelta;
-        newcol = e->e.r.left.vf & FIX_COL ||
-        e->e.r.left.vp->row < r1 || e->e.r.left.vp->row > r2 ||
-        e->e.r.left.vp->col < c1 || e->e.r.left.vp->col > c2 ?
-        e->e.r.left.vp->col :
-        transpose ? c1 + Cdelta + e->e.r.left.vp->row - r1 :
-        e->e.r.left.vp->col + Cdelta;
-        ret->e.r.left.vp = lookat(newrow, newcol);
+        newrow = e->e.r.left.vf & FIX_ROW || e->e.r.left.vp->row < r1 || e->e.r.left.vp->row > r2 || e->e.r.left.vp->col < c1 || e->e.r.left.vp->col > c2 ?  e->e.r.left.vp->row : special == 1 ? r1 + Rdelta + e->e.r.left.vp->col - c1 : e->e.r.left.vp->row + Rdelta;
+        newcol = e->e.r.left.vf & FIX_COL || e->e.r.left.vp->row < r1 || e->e.r.left.vp->row > r2 || e->e.r.left.vp->col < c1 || e->e.r.left.vp->col > c2 ?  e->e.r.left.vp->col : special == 1 ? c1 + Cdelta + e->e.r.left.vp->row - r1 : e->e.r.left.vp->col + Cdelta;
+        ret->e.r.left.vp =
+#ifdef UNDO
+        special == 2 ? add_undo_aux_ent(lookat(newrow, newcol)) :
+#endif
+        lookat(newrow, newcol);
         ret->e.r.left.vf = e->e.r.left.vf;
-        newrow = e->e.r.right.vf & FIX_ROW ||
-        e->e.r.right.vp->row < r1 || e->e.r.right.vp->row > r2 ||
-        e->e.r.right.vp->col < c1 || e->e.r.right.vp->col > c2 ?
-        e->e.r.right.vp->row :
-        transpose ? r1 + Rdelta + e->e.r.right.vp->col - c1 :
-        e->e.r.right.vp->row + Rdelta;
-        newcol = e->e.r.right.vf & FIX_COL ||
-        e->e.r.right.vp->row < r1 || e->e.r.right.vp->row > r2 ||
-        e->e.r.right.vp->col < c1 || e->e.r.right.vp->col > c2 ?
-        e->e.r.right.vp->col :
-        transpose ? c1 + Cdelta + e->e.r.right.vp->row - r1 :
-        e->e.r.right.vp->col + Cdelta;
-        ret->e.r.right.vp = lookat(newrow, newcol);
+        newrow = e->e.r.right.vf & FIX_ROW || e->e.r.right.vp->row < r1 || e->e.r.right.vp->row > r2 || e->e.r.right.vp->col < c1 || e->e.r.right.vp->col > c2 ?  e->e.r.right.vp->row : special == 1 ? r1 + Rdelta + e->e.r.right.vp->col - c1 : e->e.r.right.vp->row + Rdelta;
+        newcol = e->e.r.right.vf & FIX_COL || e->e.r.right.vp->row < r1 || e->e.r.right.vp->row > r2 || e->e.r.right.vp->col < c1 || e->e.r.right.vp->col > c2 ?  e->e.r.right.vp->col : special == 1 ? c1 + Cdelta + e->e.r.right.vp->row - r1 : e->e.r.right.vp->col + Cdelta;
+        ret->e.r.right.vp =
+#ifdef UNDO
+        special == 2 ? add_undo_aux_ent(lookat(newrow, newcol)) :
+#endif
+        lookat(newrow, newcol);
         ret->e.r.right.vf = e->e.r.right.vf;
     } else {
         struct enode *temprange=0;
-        //if (freeenodes) {
-        //    ret = freeenodes;
-        //    freeenodes = ret->e.o.left;
-        //} else
         ret = (struct enode *) scxmalloc((unsigned) sizeof (struct enode));
         ret->op = e->op;
         switch (ret->op) {
@@ -424,25 +455,18 @@ struct enode * copye(register struct enode *e, int Rdelta, int Cdelta, int r1, i
             case 'v':
                 {
                     int newrow, newcol;
-                    if (range && e->e.v.vp->row >= range->e.r.left.vp->row &&
-                        e->e.v.vp->row <= range->e.r.right.vp->row &&
-                        e->e.v.vp->col >= range->e.r.left.vp->col &&
-                        e->e.v.vp->col <= range->e.r.right.vp->col) {
-                            newrow = range->e.r.left.vf & FIX_ROW ? e->e.v.vp->row : e->e.v.vp->row + Rdelta;
-                            newcol = range->e.r.left.vf & FIX_COL ? e->e.v.vp->col : e->e.v.vp->col + Cdelta;
+                    if (range && e->e.v.vp->row >= range->e.r.left.vp->row && e->e.v.vp->row <= range->e.r.right.vp->row && e->e.v.vp->col >= range->e.r.left.vp->col && e->e.v.vp->col <= range->e.r.right.vp->col) {
+                        newrow = range->e.r.left.vf & FIX_ROW ? e->e.v.vp->row : e->e.v.vp->row + Rdelta;
+                        newcol = range->e.r.left.vf & FIX_COL ? e->e.v.vp->col : e->e.v.vp->col + Cdelta;
                     } else {
-                        newrow = e->e.v.vf & FIX_ROW ||
-                        e->e.v.vp->row < r1 || e->e.v.vp->row > r2 ||
-                        e->e.v.vp->col < c1 || e->e.v.vp->col > c2 ?
-                        e->e.v.vp->row : transpose ? r1 + Rdelta + e->e.v.vp->col - c1 :
-                        e->e.v.vp->row + Rdelta;
-                        newcol = e->e.v.vf & FIX_COL ||
-                        e->e.v.vp->row < r1 || e->e.v.vp->row > r2 ||
-                        e->e.v.vp->col < c1 || e->e.v.vp->col > c2 ?
-                        e->e.v.vp->col : transpose ? c1 + Cdelta + e->e.v.vp->row - r1 :
-                        e->e.v.vp->col + Cdelta;
+                        newrow = e->e.v.vf & FIX_ROW || e->e.v.vp->row < r1 || e->e.v.vp->row > r2 || e->e.v.vp->col < c1 || e->e.v.vp->col > c2 ?  e->e.v.vp->row : special == 1 ? r1 + Rdelta + e->e.v.vp->col - c1 : e->e.v.vp->row + Rdelta;
+                        newcol = e->e.v.vf & FIX_COL || e->e.v.vp->row < r1 || e->e.v.vp->row > r2 || e->e.v.vp->col < c1 || e->e.v.vp->col > c2 ?  e->e.v.vp->col : special == 1 ? c1 + Cdelta + e->e.v.vp->row - r1 : e->e.v.vp->col + Cdelta;
                     }
-                    ret->e.v.vp = lookat(newrow, newcol);
+                    ret->e.v.vp =
+#ifdef UNDO
+                        special == 2 ? add_undo_aux_ent(lookat(newrow, newcol)) :
+#endif
+                        lookat(newrow, newcol);
                     ret->e.v.vf = e->e.v.vf;
                     break;
                 }
@@ -453,7 +477,7 @@ struct enode * copye(register struct enode *e, int Rdelta, int Cdelta, int r1, i
             case 'F':
                 if ((range && ret->op == 'F') || (!range && ret->op == 'f'))
                     Rdelta = Cdelta = 0;
-                ret->e.o.left = copye(e->e.o.left, Rdelta, Cdelta, r1, c1, r2, c2, transpose);
+                ret->e.o.left = copye(e->e.o.left, Rdelta, Cdelta, r1, c1, r2, c2, special);
                 ret->e.o.right = (struct enode *)0;
                 break;
             case '$':
@@ -469,8 +493,8 @@ struct enode * copye(register struct enode *e, int Rdelta, int Cdelta, int r1, i
                     //ret->e.o.right = (struct enode *)0;
                     break; /* fix #108 */
                 }
-                ret->e.o.left = copye(e->e.o.left, Rdelta, Cdelta, r1, c1, r2, c2, transpose);
-                ret->e.o.right = copye(e->e.o.right, Rdelta, Cdelta, r1, c1, r2, c2, transpose);
+                ret->e.o.left = copye(e->e.o.left, Rdelta, Cdelta, r1, c1, r2, c2, special);
+                ret->e.o.right = copye(e->e.o.right, Rdelta, Cdelta, r1, c1, r2, c2, special);
                 break;
         }
         switch (ret->op) {
@@ -569,12 +593,14 @@ void formatcol(int c) {
             break;
     }
     sc_info("Current format is %d %d %d", fwidth[curcol], precision[curcol], realfmt[curcol]);
-    update(TRUE);
+    ui_update(TRUE);
     return;
 }
 
-// Insert a single row.  It will be inserted before currow
-// if after is 0; after if it is 1.
+/*
+ * Insert a single row.  It will be inserted before currow
+ * if after is 0; after if it is 1.
+ */
 void insert_row(int after) {
     int    r, c;
     struct ent ** tmprow, ** pp, ** qq;
@@ -607,9 +633,11 @@ void insert_row(int after) {
     return;
 }
 
-// Insert a single col. The col will be inserted
-// BEFORE CURCOL if after is 0;
-// AFTER  CURCOL if it is 1.
+/*
+ * Insert a single col. The col will be inserted
+ * BEFORE CURCOL if after is 0;
+ * AFTER  CURCOL if it is 1.
+ */
 void insert_col(int after) {
     int r, c;
     register struct ent ** pp, ** qq;
@@ -659,63 +687,76 @@ void insert_col(int after) {
     return;
 }
 
-// delete a row
-void deleterow() {
+void deleterow(int row, int mult) {
+    if (any_locked_cells(row, 0, row + mult - 1, maxcol)) {
+        sc_error("Locked cells encountered. Nothing changed");
+        return;
+    }
+#ifdef UNDO
+    create_undo_action();
+    copy_to_undostruct(row, 0, row + mult - 1, maxcol, 'd');
+    save_undo_range_shift(-mult, 0, row, 0, row - 1 + mult, maxcol);
+
+    // here we save in undostruct, all the ents that depends on the deleted one (before change)
+    extern struct ent_ptr * deps;
+    int i;
+    ents_that_depends_on_range(row, 0, row + mult - 1, maxcol);
+    for (i = 0; deps != NULL && i < deps->vf; i++)
+        copy_to_undostruct(deps[i].vp->row, deps[i].vp->col, deps[i].vp->row, deps[i].vp->col, 'd');
+#endif
+
+    fix_marks(-mult, 0, row + mult - 1, maxrow, 0, maxcol);
+    if (!loading) yank_area(row, 0, row + mult - 1, maxcol, 'r', mult);
+
+    // do the job
+    int_deleterow(row, mult);
+
+    //flush_saved(); // we have to flush only at exit. this is in case we want to UNDO
+
+    if (!loading) modflg++;
+
+#ifdef UNDO
+    // here we save in undostruct, all the ents that depends on the deleted one (after the change)
+    for (i = 0; deps != NULL && i < deps->vf; i++) // TODO here save just ents that are off the shifted range
+        copy_to_undostruct(deps[i].vp->row, deps[i].vp->col, deps[i].vp->row, deps[i].vp->col, 'a');
+
+    if (deps != NULL) free(deps);
+    deps = NULL;
+
+    end_undo_action();
+#endif
+    return;
+}
+
+/*
+ * Delete a row - internal function
+ * parameters: row = row to delete, multi = cmds multiplier.(commonly 1)
+ */
+void int_deleterow(int row, int mult) {
     register struct ent ** pp;
     int r, c;
 
-    if (any_locked_cells(currow, 0, currow, maxcol)) {
-        sc_info("Locked cells encountered. Nothing changed");
+    //if (currow > maxrow) return;
 
-    } else {
-#ifdef UNDO
-        // here we save in undostruct, all the ents that depends on the deleted one (before change)
-        extern struct ent_ptr * deps;
-        int i, n = 0;
-        ents_that_depends_on_range(currow, 0, currow, maxcol);
-        if (deps != NULL) {
-            n = deps->vf;
-            for (i = 0; i < n; i++) {
-                copy_to_undostruct(deps[i].vp->row, deps[i].vp->col, deps[i].vp->row, deps[i].vp->col, 'd');
-            }
-        }
-#endif
-
-        //flush_saved();
-        erase_area(currow, 0, currow, maxcol, 0, 1);
-        if (currow > maxrow) return;
-
-        for (r = currow; r < maxrows - 1; r++) {
+    while (mult--) {
+        erase_area(row, 0, row, maxcol, 0, 1); //important: this mark the ents as deleted
+        for (r = row; r < maxrows - 1; r++) {
             for (c = 0; c < maxcols; c++) {
-                if (r <= maxrow - 1) {
+                if (r <= maxrow) {
                     pp = ATBL(tbl, r, c);
                     pp[0] = *ATBL(tbl, r + 1, c);
                     if ( pp[0] ) pp[0]->row--;
                 }
             }
         }
-
-        maxrow--;
+        rebuild_graph(); //FIXME CHECK HERE WHY REBUILD IS NEEDED. See NOTE1 in shift.c
         sync_refs();
-        //flush_saved(); // we have to flush only at exit. this is in case we want to UNDO
-        modflg++;
-
-#ifdef UNDO
-        // here we save in undostruct, all the ents that depends on the deleted one (after the change)
-        for (i = 0; i < n; i++)
-            if (deps[i].vp->row >= currow)
-                copy_to_undostruct(deps[i].vp->row+1, deps[i].vp->col, deps[i].vp->row+1, deps[i].vp->col, 'a');
-            else
-                copy_to_undostruct(deps[i].vp->row, deps[i].vp->col, deps[i].vp->row, deps[i].vp->col, 'a');
-
-        if (deps != NULL) free(deps);
-        deps = NULL;
-#endif
-
+        //if (atoi(get_conf_value("autocalc")) && ! loading) EvalAll();
+        EvalAll();
+        maxrow--;
     }
     return;
 }
-
 void ljustify(int sr, int sc, int er, int ec) {
     struct ent *p;
     int i, j;
@@ -736,7 +777,6 @@ void ljustify(int sr, int sc, int er, int ec) {
             if (p && p->label) {
                 p->flags &= ~is_label;
                 p->flags |= is_leftflush | is_changed;
-                changed++;
                 modflg++;
             }
         }
@@ -764,7 +804,6 @@ void rjustify(int sr, int sc, int er, int ec) {
             if (p && p->label) {
                 p->flags &= ~(is_label | is_leftflush);
                 p->flags |= is_changed;
-                changed++;
                 modflg++;
             }
         }
@@ -792,7 +831,6 @@ void center(int sr, int sc, int er, int ec) {
             if (p && p->label) {
                 p->flags &= ~is_leftflush;
                 p->flags |= is_label | is_changed;
-                changed++;
                 modflg++;
             }
         }
@@ -801,8 +839,9 @@ void center(int sr, int sc, int er, int ec) {
 }
 
 void chg_mode(char strcmd){
+    lastmode = curmode;
     switch (strcmd) {
-        case '=': 
+        case '=':
             curmode = INSERT_MODE;
             break;
         case '<':
@@ -829,13 +868,14 @@ void chg_mode(char strcmd){
         case 'v':
             curmode = VISUAL_MODE;
             break;
-    } 
+    }
     return;
 }
 
-
-// del selected cells
-// can be a single cell or a range
+/*
+ * del selected cells
+ * can be a single cell or a range
+ */
 void del_selected_cells() {
     int tlrow = currow;
     int tlcol = curcol;
@@ -876,7 +916,7 @@ void del_selected_cells() {
     }
     #endif
 
-    erase_area(tlrow, tlcol, brrow, brcol, 0, 0);
+    erase_area(tlrow, tlcol, brrow, brcol, 0, 0); //important: this erases the ents, but does NOT mark them as deleted
     modflg++;
     sync_refs();
     //flush_saved(); DO NOT UNCOMMENT! flush_saved shall not be called other than at exit.
@@ -901,89 +941,20 @@ void del_selected_cells() {
     return;
 }
 
-
-// Change cell content sending inputline to interpreter
-void insert_or_edit_cell() {
-    char ope[BUFFERSIZE] = "";
-    switch (insert_edit_submode) {
-        case '=':
-            strcpy(ope, "let");
-            break;
-        case '<':
-            strcpy(ope, "leftstring");
-            break;
-        case '>':
-            strcpy(ope, "rightstring");
-            break;
-        case '\\':
-            strcpy(ope, "label");
-            break;
-    }
-    if (inputline[0] == L'"') {
-        del_wchar(inputline, 0);
-    } else if (insert_edit_submode != '=' && inputline[0] != L'"') {
-        add_wchar(inputline, L'\"', 0);
-        add_wchar(inputline, L'\"', wcslen(inputline));
-    }
-
-    #ifdef UNDO
-    create_undo_action();
-    copy_to_undostruct(currow, curcol, currow, curcol, 'd');
-
-    // here we save in undostruct, all the ents that depends on the deleted one (before change)
-    extern struct ent_ptr * deps;
-    int i, n = 0;
-    ents_that_depends_on_range(currow, curcol, currow, curcol);
-    if (deps != NULL) {
-        n = deps->vf;
-        for (i = 0; i < n; i++)
-            copy_to_undostruct(deps[i].vp->row, deps[i].vp->col, deps[i].vp->row, deps[i].vp->col, 'd');
-    }
-    #endif
-
-    if (getVertex(graph, lookat(currow, curcol), 0) != NULL) destroy_vertex(lookat(currow, curcol));
-
-    // ADD PADDING INTELLIGENCE HERE ?
-    (void) swprintf(interp_line, BUFFERSIZE, L"%s %s = %ls", ope, v_name(currow, curcol), inputline);
-
+/*
+ * Enter cell content on a cell.
+ * Covers commands LET, LABEL, LEFTSTRING and RIGHTSTRING
+ */
+void enter_cell_content(int r, int c, char * submode,  wchar_t * content) {
+    // TODO - ADD PADDING INTELLIGENCE HERE ??
+    (void) swprintf(interp_line, BUFFERSIZE, L"%s %s = %ls", submode, v_name(r, c), content);
     send_to_interp(interp_line);
-
-    #ifdef UNDO
-    copy_to_undostruct(currow, curcol, currow, curcol, 'a');
-    // here we save in undostruct, all the ents that depends on the deleted one (after change)
-    if (deps != NULL) free(deps);
-    ents_that_depends_on_range(currow, curcol, currow, curcol);
-    if (deps != NULL) {
-        n = deps->vf;
-        for (i = 0; i < n; i++)
-            copy_to_undostruct(deps[i].vp->row, deps[i].vp->col, deps[i].vp->row, deps[i].vp->col, 'a');
-        free(deps);
-        deps = NULL;
-    }
-    end_undo_action();
-    #endif
-
-    inputline[0] = L'\0';
-    inputline_pos = 0;
-    real_inputline_pos = 0;
-    chg_mode('.');
-    clr_header(input_win, 0);
-
-    char * opt = get_conf_value("newline_action");
-    switch (opt[0]) {
-        case 'j':
-            currow = forw_row(1)->row;
-            break;
-        case 'l':
-            curcol = forw_col(1)->col;
-            break;
-    }
-    update(TRUE);
-    return;
 }
 
-// Send command to interpreter
-// wide_char version
+/*
+ * Send command to interpreter
+ * wide_char version
+ */
 void send_to_interp(wchar_t * oper) {
     if (atoi(get_conf_value("nocurses"))) {
         int pos = -1;
@@ -1000,17 +971,6 @@ void send_to_interp(wchar_t * oper) {
     return;
 }
 
-// Send command to interpreter
-void send_to_interpp(char * oper) {
-    if (atoi(get_conf_value("nocurses"))) {
-        sc_debug("Interp GOT: %s", oper);
-    }
-    strcpy(line, oper);
-    linelim = 0;
-    yyparse();
-    if (atoi(get_conf_value("autocalc")) && ! loading) EvalAll();
-    return;
-}
 /* return a pointer to a cell's [struct ent *], creating if needed */
 struct ent * lookat(int row, int col) {
     register struct ent **pp;
@@ -1018,17 +978,11 @@ struct ent * lookat(int row, int col) {
     checkbounds(&row, &col);
     pp = ATBL(tbl, row, col);
     if ( *pp == NULL) {
-        //if (freeents == NULL) {
-            //*pp = (struct ent *) scxmalloc( (unsigned) sizeof(struct ent) );
-            *pp = (struct ent *) malloc( (unsigned) sizeof(struct ent) );
-        //} else {
-        //    sc_debug("lookat. reuse of deleted ent row:%d col:%d", row, col);
-        //    *pp = freeents;
-        //    freeents = freeents->next;
-        //}
+         *pp = (struct ent *) malloc( (unsigned) sizeof(struct ent) );
         (*pp)->label = (char *) 0;
         (*pp)->flags = may_sync;
         (*pp)->expr = (struct enode *) 0;
+        (*pp)->trigger = (struct trigger *) 0;
         (*pp)->v = (double) 0.0;
         (*pp)->format = (char *) 0;
         (*pp)->cellerror = CELLOK;
@@ -1077,168 +1031,222 @@ void clearent(struct ent * v) {
     v->ucolor = NULL;
 
     v->flags = is_changed;
-    changed++;
+
     modflg++;
 
     return;
 }
 
-void scroll_left(int n) {
-    while (n--) {
-        if (! offscr_sc_cols ) {
-            break;
-        }
-        int a = 1;
-        int b = 0;
-        offscr_sc_cols--;
-        while (a != b && curcol) {
-            a = offscr_sc_cols;
-            calc_offscr_sc_cols();
-            b = offscr_sc_cols;
-            if (a != b) {
-                curcol --;
-                offscr_sc_cols = a;
-            }
-        }
-    }
-    return;
-}
-
-void scroll_right(int n) {
-    while (n--) {
-        // This while statement allow the cursor to shift to the right when the
-        // las visible column is reached in the screen
-        while (curcol < offscr_sc_cols + 1) {
-            curcol++;
-        }
-        offscr_sc_cols++;
-    }
-    return;
-}
-
-void scroll_down(int n) {
-    while (n--) {
-        if (currow == offscr_sc_rows) {
-            forw_row(1);
-            unselect_ranges();
-        }
-        offscr_sc_rows++;
-    }
-    return;
-}
-
-void scroll_up(int n) {
-    while (n--) {
-        if (offscr_sc_rows)
-            offscr_sc_rows--;
-        else
-            break;
-        if (currow == offscr_sc_rows + LINES - RESROW - 1) {
-            back_row(1);
-            unselect_ranges();
-        }
-    }
-    return;
-}
-
-struct ent * left_limit() {
-    int c = 0;
-    while ( col_hidden[c] && c < curcol ) c++; 
-    return lookat(currow, c);
-}
-
-struct ent * right_limit() {
-    register struct ent *p;
-    int c = maxcols - 1;
-    while ( (! VALID_CELL(p, currow, c) && c > 0) || col_hidden[c]) c--;
-    return lookat(currow, c);
-}
-
-struct ent * goto_top() {
-    int r = 0;
-    while ( row_hidden[r] && r < currow ) r++; 
-    return lookat(r, curcol);
-}
-
-struct ent * goto_bottom() {
-    register struct ent *p;
-    int r = maxrows - 1;
-    while ( (! VALID_CELL(p, r, curcol) && r > 0) || row_hidden[r]) r--;
-    return lookat(r, curcol);
-}
-
 // moves curcol back one displayed column
 struct ent * back_col(int arg) {
+    extern int center_hidden_cols;
+    int freeze = freeze_ranges && (freeze_ranges->type == 'c' ||  freeze_ranges->type == 'a') ? 1 : 0;
     int c = curcol;
+
     while (--arg >= 0) {
-    if (c)
-        c--;
-    else {
-        sc_info ("At column A");
-        break; 
+        if (c) {
+            // need to update curcol here so center_hidden_cols
+            // get update correctly after calc_offscr_sc_cols
+            curcol = --c;
+            calc_offscr_sc_cols();
+        } else {
+            sc_info ("At column A");
+            break;
+        }
+        while ((col_hidden[c] || (freeze && c > freeze_ranges->br->col
+        && c < freeze_ranges->br->col + center_hidden_cols)) && c) {
+            // need to update curcol here so center_hidden_cols
+            // get update correctly after calc_offscr_sc_cols
+            curcol = --c;
+            calc_offscr_sc_cols();
+        }
     }
-    while( col_hidden[c] && c )
-        c--;
-    }
-    //rowsinrange = 1;
-    //colsinrange = fwidth[curcol];
+
     return lookat(currow, c);
 }
 
 /* moves curcol forward one displayed column */
 struct ent * forw_col(int arg) {
     int c = curcol;
+    extern int center_hidden_cols;
+    int freeze = freeze_ranges && (freeze_ranges->type == 'c' ||  freeze_ranges->type == 'a') ? 1 : 0;
+
     while (--arg >= 0) {
         if (c < maxcols - 1)
             c++;
         else
             if (! growtbl(GROWCOL, 0, arg)) {    /* get as much as needed */
-                //sc_error("cannot grow");
+                sc_error("cannot grow");
                 return lookat(currow, curcol);
-                //break;
             } else
                 c++;
-        while (col_hidden[c] && (c < maxcols - 1))
+        while ((col_hidden[c] || (freeze && c > freeze_ranges->br->col && c <= freeze_ranges->br->col + center_hidden_cols)) && (c < maxcols - 1))
             c++;
+
     }
-    //rowsinrange = 1;
-    //colsinrange = fwidth[curcol];
     return lookat(currow, c);
 }
 
 /* moves currow forward one displayed row */
 struct ent * forw_row(int arg) {
     int r = currow;
+    extern int center_hidden_rows;
+    int freeze = freeze_ranges && (freeze_ranges->type == 'r' ||  freeze_ranges->type == 'a') ? 1 : 0;
+
     while (arg--) {
         if (r < maxrows - 1)
             r++;
         else {
             if (! growtbl(GROWROW, arg, 0)) {
-                //sc_error("cannot grow");
+                sc_error("cannot grow");
                 return lookat(currow, curcol);
-            } else 
+            } else
                 r++;
         }
-        while (row_hidden[r] && (r < maxrows - 1)) {
+        while ((row_hidden[r] || (freeze && r > freeze_ranges->br->row && r <= freeze_ranges->br->row + center_hidden_rows)) && (r < maxrows - 1))
             r++;
-        }
     }
     return lookat(r, curcol);
 }
 
 /* moves currow backward one displayed row */
 struct ent * back_row(int arg) {
+    int bkprow = currow;
     int r = currow;
+    extern int center_hidden_rows;
+    //int freeze = freeze_ranges && (freeze_ranges->type == 'r' ||  freeze_ranges->type == 'a') ? 1 : 0;
+
     while (arg--) {
-        if (r) r--;
-        else {
+        if (r) {
+            // need to update currow here so center_hidden_rows
+            // get update correctly after calc_offscr_sc_rows
+            //currow = --r;
+            //calc_offscr_sc_rows();
+            r--;
+        } else {
             sc_info("At row zero");
             break;
         }
-        while (row_hidden[r] && r)
+        //while ((row_hidden[r] || (freeze && r > freeze_ranges->br->row && r < freeze_ranges->br->row + center_hidden_rows)) && r)
+        while ((row_hidden[r] && r)) {
+            // need to update currow here so center_hidden_rows
+            // get update correctly after calc_offscr_sc_rows
+            //currow = --r;
+            //calc_offscr_sc_rows();
             r--;
+        }
     }
+    currow = bkprow;
     return lookat(r, curcol);
+}
+
+void scroll_down(int n) {
+    extern int center_hidden_rows;
+    int freezer = freeze_ranges && (freeze_ranges->type == 'r' ||  freeze_ranges->type == 'a') ? 1 : 0;
+    int tlrow = freezer ? freeze_ranges->tl->row : 0;
+    int brrow = freezer ? freeze_ranges->br->row : 0;
+    while (currow < maxrows && n--) {
+    //while (n--) {
+        if ( (!freezer && currow == offscr_sc_rows) ||
+             ( freezer && currow == offscr_sc_rows + center_hidden_rows + brrow - tlrow + 1) // && currow != tlrow)
+        ) {
+            currow = forw_row(1)->row;
+            unselect_ranges();
+        }
+        if (freezer && offscr_sc_rows == tlrow) {
+            center_hidden_rows++;
+        } else {
+            offscr_sc_rows++;
+        }
+    }
+    return;
+}
+
+void scroll_up(int n) {
+    extern int center_hidden_rows;
+    int freezer = freeze_ranges && (freeze_ranges->type == 'r' ||  freeze_ranges->type == 'a') ? 1 : 0;
+    int r, i;
+    int brrow = freezer ? freeze_ranges->br->row : 0;
+    int tlrow = freezer ? freeze_ranges->tl->row : 0;
+
+    while (n--) {
+        // check what is the last row visible (r)
+        i = 0, r = offscr_sc_rows-1;
+        while (i < LINES - RESROW - 1 && r < maxrows - 1) {
+            r++;
+            if (row_hidden[r]) continue;
+            else if (r < offscr_sc_rows && ! (freezer && r >= tlrow && r <= brrow)) continue;
+            else if (freezer && r > brrow && r <= brrow + center_hidden_rows) continue;
+            else if (freezer && r < tlrow && r >= tlrow - center_hidden_rows) continue;
+            i++;
+        }
+
+        if (freezer && center_hidden_rows && r != brrow) {
+            center_hidden_rows--;
+        } else if (offscr_sc_rows && (!freezer || r > brrow) ) {
+            offscr_sc_rows--;
+        } else if (offscr_sc_rows && freezer && r == brrow) {
+            offscr_sc_rows--;
+            center_hidden_rows++;
+        } else {
+            sc_info("cannot scroll no longer");
+            break;
+        }
+        if (currow == r) {
+            currow = back_row(1)->row;
+            unselect_ranges();
+        }
+    }
+    return;
+}
+
+struct ent * go_home() {
+    return lookat(0, 0);
+}
+
+struct ent * vert_top() {
+    extern int center_hidden_rows;
+    int freezer = freeze_ranges && (freeze_ranges->type == 'r' ||  freeze_ranges->type == 'a') ? 1 : 0;
+    int brrow = freezer ? freeze_ranges->br->row : 0;
+
+    int r = offscr_sc_rows;
+    while ( row_hidden[r] && r < currow ) r++;
+    if (freezer && currow > brrow + center_hidden_rows + 1) while (row_hidden[r] || r <= brrow + center_hidden_rows) r++;
+    return lookat(r, curcol);
+}
+
+struct ent * vert_bottom() {
+    extern int center_hidden_rows;
+    int freezer = freeze_ranges && (freeze_ranges->type == 'r' ||  freeze_ranges->type == 'a') ? 1 : 0;
+    int brrow = freezer ? freeze_ranges->br->row : 0;
+    int tlrow = freezer ? freeze_ranges->tl->row : 0;
+
+    int i = 0, r = offscr_sc_rows-1;
+    while (i < LINES - RESROW - 1) {
+        r++;
+        if (row_hidden[r]) continue;
+        else if (r < offscr_sc_rows && ! (freezer && r >= tlrow && r <= brrow)) continue;
+        else if (freezer && r > brrow && r <= brrow + center_hidden_rows) continue;
+        else if (freezer && r < tlrow && r >= tlrow - center_hidden_rows) continue;
+        i++;
+    }
+    if (r > maxrows) r = maxrows;
+    return lookat(r, curcol);
+}
+
+struct ent * vert_middle() {
+    extern int center_hidden_rows;
+    int freezer = freeze_ranges && (freeze_ranges->type == 'r' ||  freeze_ranges->type == 'a') ? 1 : 0;
+    int brrow = freezer ? freeze_ranges->br->row : 0;
+    int tlrow = freezer ? freeze_ranges->tl->row : 0;
+
+    int top = offscr_sc_rows;
+    while ( (row_hidden[top] && top < currow) || (freezer && top >= tlrow && top <= brrow) ||
+        (freezer && top > brrow && top <= brrow + center_hidden_rows) ||
+        (freezer && top < tlrow && top >= tlrow - center_hidden_rows)) top++;
+    int mid = (vert_bottom()->row + top) / 2;
+    while ( row_hidden[mid] && mid < currow ) mid++; // just in case mid is hidden
+    return lookat(mid, curcol);
 }
 
 struct ent * go_end() {
@@ -1261,24 +1269,111 @@ struct ent * go_end() {
     return NULL;
 }
 
-struct ent * go_home() {
-    return lookat(0, 0);
-}
-
-// if ticks a cell, returns struct ent *
-// if ticks a range, return struct ent * to top left cell
-struct ent * tick(char c) {
+/*
+ * if ticks a cell, returns struct ent *
+ * if ticks a range, return struct ent * to top left cell
+ */
+struct ent * tick(char ch) {
+    int r, c;
+    struct mark * m = get_mark(ch);
     //tick cell
-    int r = get_mark(c)->row;
-    if (r != -1)
-        return lookat(r, get_mark(c)->col);
+    r = m->row;
+
+    if (r != -1) {
+        checkbounds(&r, &curcol);
+        return lookat(r, m->col);
+    }
 
     // tick range
     if (curmode != VISUAL_MODE) {
-        get_mark(c)->rng->selected = 1; 
-        return lookat(get_mark(c)->rng->tlrow, get_mark(c)->rng->tlcol);
+        r = m->rng->tlrow;
+        c = m->rng->tlcol;
+        m->rng->selected = 1;
+        checkbounds(&r, &c);
+        return lookat(r, c);
     }
     return NULL;
+}
+
+void scroll_right(int n) {
+    extern int center_hidden_cols;
+    int freezec = freeze_ranges && (freeze_ranges->type == 'c' ||  freeze_ranges->type == 'a') ? 1 : 0;
+    int brcol = freezec ? freeze_ranges->br->col : 0;
+    int tlcol = freezec ? freeze_ranges->tl->col : 0;
+
+    while (curcol < maxcols && n--) {
+        if ((freezec && curcol == offscr_sc_cols + center_hidden_cols + brcol - tlcol + 1) ||
+           (!freezec && curcol == offscr_sc_cols)) {
+            curcol = forw_col(1)->col;
+            unselect_ranges();
+        }
+        if (freezec && offscr_sc_cols == freeze_ranges->tl->col) {
+            center_hidden_cols++;
+        } else {
+            offscr_sc_cols++;
+        }
+        while (curcol < offscr_sc_cols) curcol++;
+    }
+    return;
+}
+
+void scroll_left(int n) {
+    extern int center_hidden_cols;
+    int freezec = freeze_ranges && (freeze_ranges->type == 'c' ||  freeze_ranges->type == 'a') ? 1 : 0;
+
+    while (n--) {
+        int a = 1;
+        int b = 0, c = 0, d = 0;
+        if (freezec && center_hidden_cols) {
+            center_hidden_cols--;
+        } else if (offscr_sc_cols) {
+            offscr_sc_cols--;
+        } else {
+            sc_info("cannot scroll no longer");
+            break;
+        }
+        while (a != b && curcol) {
+            a = offscr_sc_cols;
+            c = center_hidden_cols;
+            calc_offscr_sc_cols();
+            b = offscr_sc_cols;
+            d = center_hidden_cols;
+            if (a != b || c != d) {
+                curcol = back_col(1)->col;
+                offscr_sc_cols = a;
+                center_hidden_cols = c;
+            }
+        }
+    }
+    return;
+}
+
+struct ent * left_limit() {
+    int c = 0;
+    while ( col_hidden[c] && c < curcol ) c++;
+    return lookat(currow, c);
+}
+
+struct ent * right_limit() {
+    register struct ent *p;
+    int c = maxcols - 1;
+    while ( (! VALID_CELL(p, currow, c) && c > 0) || col_hidden[c]) c--;
+    return lookat(currow, c);
+}
+
+// FIXME to handle freeze rows/cols
+struct ent * goto_top() {
+    int r = 0;
+    while ( row_hidden[r] && r < currow ) r++;
+    return lookat(r, curcol);
+}
+
+// FIXME to handle freeze rows/cols
+struct ent * goto_bottom() {
+    register struct ent *p;
+    int r = maxrows - 1;
+    while ( (! VALID_CELL(p, r, curcol) && r > 0) || row_hidden[r]) r--;
+    return lookat(r, curcol);
 }
 
 struct ent * go_forward() {
@@ -1301,42 +1396,6 @@ struct ent * go_forward() {
     return lookat(r_ori, c_ori);
 }
 
-struct ent * go_backward() {
-    int r = currow, c = curcol;
-    int r_ori = r, c_ori = c;
-    register struct ent * p;
-    do {
-        if (c) 
-            c--;
-        else {
-            if (r) {
-                r--;
-                c = maxcols - 1;
-            } else break;
-        }
-        if ( VALID_CELL(p, r, c) && ! col_hidden[c] && ! row_hidden[r] )
-            return lookat(r, c);
-    } while ( currow || curcol );
-
-    return lookat(r_ori, c_ori);
-}
-
-struct ent * vert_top() {
-    return currow < LINES - RESROW - 1 ? lookat(0, curcol) : lookat(offscr_sc_rows, curcol);
-}
-
-struct ent * vert_middle() {
-    int bottom = offscr_sc_rows + LINES - RESROW - 2;
-    if (bottom > maxrow) bottom = maxrow;
-    return lookat( ((currow < LINES - RESROW - 1 ? 0 : offscr_sc_rows) + bottom) / 2, curcol);
-}
-
-struct ent * vert_bottom() {
-    int c = offscr_sc_rows + LINES - RESROW - 2;
-    if (c > maxrow) c = maxrow;
-    return lookat(c, curcol);
-}
-
 struct ent * go_bol() {
     return lookat(currow, offscr_sc_cols);
 }
@@ -1349,13 +1408,43 @@ struct ent * horiz_middle() {
     int i;
     int ancho = rescol;
     int visibles = calc_offscr_sc_cols();
+    int freeze = freeze_ranges && (freeze_ranges->type == 'c' ||  freeze_ranges->type == 'a') ? 1 : 0;
+    int tlcol = freeze ? freeze_ranges->tl->col : 0;
+    int brcol = freeze ? freeze_ranges->br->col : 0;
+    extern int center_hidden_cols;
+
     for (i = offscr_sc_cols; i < offscr_sc_cols + visibles; i++) {
+        //if not shown, continue
+        if (col_hidden[i]) continue;
+        else if (freeze && i > brcol && i <= brcol + center_hidden_cols) continue;
+        else if (freeze && i < tlcol && i >= tlcol - center_hidden_cols) continue;
+
         ancho += fwidth[i];
         if (ancho >= (COLS-rescol)/2) {
             return lookat(currow, i);
         }
     }
     return NULL;
+}
+
+struct ent * go_backward() {
+    int r = currow, c = curcol;
+    int r_ori = r, c_ori = c;
+    register struct ent * p;
+    do {
+        if (c)
+            c--;
+        else {
+            if (r) {
+                r--;
+                c = maxcols - 1;
+            } else break;
+        }
+        if ( VALID_CELL(p, r, c) && ! col_hidden[c] && ! row_hidden[r] )
+            return lookat(r, c);
+    } while ( currow || curcol );
+
+    return lookat(r_ori, c_ori);
 }
 
 void auto_justify(int ci, int cf, int min) {
@@ -1426,7 +1515,7 @@ void valueize_area(int sr, int sc, int er, int ec) {
     }
 
     if (sr < 0)
-        sr = 0; 
+        sr = 0;
     if (sc < 0)
         sc = 0;
     checkbounds(&er, &ec);
@@ -1539,8 +1628,7 @@ int fsum() {
         }
         if (currow == r) {
 #ifdef UNDO
-            dismiss_undo_item();
-            end_undo_action();
+            dismiss_undo_item(NULL);
 #endif
         } else {
             swprintf(interp_line, BUFFERSIZE, L"let %s%d = @SUM(", coltoa(curcol), currow);
@@ -1555,8 +1643,7 @@ int fsum() {
         }
         if (curcol == c) {
 #ifdef UNDO
-            dismiss_undo_item();
-            end_undo_action();
+            dismiss_undo_item(NULL);
 #endif
         } else {
             swprintf(interp_line, BUFFERSIZE, L"let %s%d = @SUM(", coltoa(curcol), currow);
@@ -1629,8 +1716,10 @@ int fcopy() {
     return 0;
 }
 
-// add padd to cells!
-// this sets n to padding of a range
+/*
+ * add padd to cells!
+ * this sets n to padding of a range
+ */
 int pad(int n, int r1, int c1, int r2, int c2) {
     int r, c;
     struct ent * p ;
@@ -1676,11 +1765,243 @@ int pad(int n, int r1, int c1, int r2, int c2) {
     return 0;
 }
 
-// Check if the buffer content is a valid command
-// res = 0 or NO_CMD : buf has no command
-// res = 1 or EDITION_CMD : buf has a command
-// res = 2 or MOVEMENT_CMD : buf has a movement command or a command that do not
-// change cell content, and should not be considered by the '.' command
+/*
+ * Calculate number of hidden columns in the left
+ * q are the number of columns that are before offscr_sc_cols that are shown because they are frozen.
+ */
+int calc_offscr_sc_cols() {
+    int q = 0, i, cols = 0, col = 0;
+    int freeze = freeze_ranges && (freeze_ranges->type == 'c' ||  freeze_ranges->type == 'a') ? 1 : 0;
+    int tlcol = freeze ? freeze_ranges->tl->col : 0;
+    int brcol = freeze ? freeze_ranges->br->col : 0;
+
+    // pick up col counts
+    while (freeze && curcol > brcol && curcol <= brcol + center_hidden_cols) center_hidden_cols--;
+    if (offscr_sc_cols - 1 <= curcol) {
+        for (i = 0, q = 0, cols = 0, col = rescol; i < maxcols && col + fwidth[i] <= COLS; i++) {
+            if (i < offscr_sc_cols && ! (freeze && i >= tlcol && i <= brcol)) continue;
+            else if (freeze && i > brcol && i <= brcol + center_hidden_cols) continue;
+            else if (freeze && i < tlcol && i >= tlcol - center_hidden_cols) continue;
+            if (i < offscr_sc_cols && freeze && i >= tlcol && i <= brcol && ! col_hidden[i] ) q++;
+            cols++;
+
+            if (! col_hidden[i]) col += fwidth[i];
+        }
+    }
+
+    // get  off screen cols
+    while ( offscr_sc_cols + center_hidden_cols + cols - 1      < curcol || curcol < offscr_sc_cols
+            || (freeze && curcol < tlcol && curcol >= tlcol - center_hidden_cols)) {
+
+        // izq
+        if (offscr_sc_cols - 1 == curcol) {
+            if (freeze && offscr_sc_cols + cols + center_hidden_cols >= brcol && brcol - cols - offscr_sc_cols + 2 > 0)
+                center_hidden_cols = brcol - cols - offscr_sc_cols + 2;
+            offscr_sc_cols--;
+
+        // derecha
+        } else if (offscr_sc_cols + center_hidden_cols + cols == curcol &&
+            (! freeze || (curcol > brcol && offscr_sc_cols < tlcol) || (curcol >= cols && offscr_sc_cols < tlcol))) {
+            offscr_sc_cols++;
+
+        // derecha con freeze cols a la izq.
+        } else if (offscr_sc_cols + center_hidden_cols + cols == curcol) {
+            center_hidden_cols++;
+
+        // derecha con freeze a la derecha
+        } else if (freeze && curcol < tlcol && curcol >= tlcol - center_hidden_cols ) {
+            center_hidden_cols--;
+            offscr_sc_cols++;
+
+        } else {
+            // Try to put the cursor in the center of the screen
+            col = (COLS - rescol - fwidth[curcol]) / 2 + rescol;
+            if (freeze && curcol > brcol) {
+                offscr_sc_cols = tlcol;
+                center_hidden_cols = curcol - brcol; //FIXME shall we count frozen cols to center??
+            } else {
+                offscr_sc_cols = curcol;
+                center_hidden_cols = 0;
+            }
+            for (i=curcol-1; i >= 0 && col-fwidth[i] - 1 > rescol; i--) {
+                if (freeze && curcol > brcol) center_hidden_cols--;
+                else offscr_sc_cols--;
+                if ( ! col_hidden[i]) col -= fwidth[i];
+            }
+        }
+        // Now pick up the counts again
+        for (i = 0, cols = 0, col = rescol, q = 0; i < maxcols && col + fwidth[i] <= COLS; i++) {
+            if (i < offscr_sc_cols && ! (freeze && i >= tlcol && i <= brcol)) continue;
+            else if (freeze && i > brcol && i <= brcol + center_hidden_cols) continue;
+            else if (freeze && i < tlcol && i >= tlcol - center_hidden_cols) continue;
+            if (i < offscr_sc_cols && freeze && i >= tlcol && i <= brcol && ! col_hidden[i]) q++;
+            cols++;
+
+            if (! col_hidden[i]) col += fwidth[i];
+        }
+    }
+    while (freeze && curcol > brcol && curcol <= brcol + center_hidden_cols) center_hidden_cols--;
+    return cols + center_hidden_cols - q;
+}
+
+// Calculate number of hide rows above
+int calc_offscr_sc_rows() {
+    int q, i, rows = 0, row = 0;
+    int freeze = freeze_ranges && (freeze_ranges->type == 'r' ||  freeze_ranges->type == 'a') ? 1 : 0;
+    int tlrow = freeze ? freeze_ranges->tl->row : 0;
+    int brrow = freeze ? freeze_ranges->br->row : 0;
+
+    // pick up row counts
+    while (freeze && currow > brrow && currow <= brrow + center_hidden_rows) center_hidden_rows--;
+    if (offscr_sc_rows - 1 <= currow) {
+        for (i = 0, q = 0, rows = 0, row=RESROW; i < maxrows && row < LINES; i++) {
+            if (i < offscr_sc_rows && ! (freeze && i >= tlrow && i <= brrow)) continue;
+            else if (freeze && i > brrow && i <= brrow + center_hidden_rows) continue;
+            else if (freeze && i < tlrow && i >= tlrow - center_hidden_rows) continue;
+            if (i < offscr_sc_rows && freeze && i >= tlrow && i <= brrow && ! row_hidden[i] ) q++;
+            rows++;
+            if (i == maxrows - 1) return rows + center_hidden_rows - q;
+            if (! row_hidden[i]) row++;
+        }
+    }
+
+    // get off screen rows
+    while ( offscr_sc_rows + center_hidden_rows + rows - RESROW < currow || currow < offscr_sc_rows
+            || (freeze && currow < tlrow && currow >= tlrow - center_hidden_rows)) {
+
+        // move up
+        if (offscr_sc_rows - 1 == currow) {
+            if (freeze && offscr_sc_rows + rows + center_hidden_rows >= brrow && brrow - rows - offscr_sc_rows + 3 > 0)
+                center_hidden_rows = brrow - rows - offscr_sc_rows + 3;
+            offscr_sc_rows--;
+
+        // move down
+        } else if (offscr_sc_rows + center_hidden_rows + rows - 1 == currow &&
+            (! freeze || (currow > brrow && offscr_sc_rows < tlrow) || (currow >= rows - 1 && offscr_sc_rows < tlrow))) {
+            offscr_sc_rows++;
+
+        // move down with freezen rows in top
+        } else if (offscr_sc_rows + center_hidden_rows + rows - 1 == currow) {
+            center_hidden_rows++;
+
+        // move down with freezen rows in bottom
+        } else if (freeze && currow < tlrow && currow >= tlrow - center_hidden_rows ) {
+            center_hidden_rows--;
+            offscr_sc_rows++;
+
+        } else {
+            // Try to put the cursor in the center of the screen
+            row = (LINES - RESROW) / 2 + RESROW;
+            if (freeze && currow > brrow) {
+                offscr_sc_rows = tlrow;
+                center_hidden_rows = currow - 2; //FIXME
+            } else {
+                offscr_sc_rows = currow;
+                center_hidden_rows = 0;
+            }
+            for (i=currow-1; i >= 0 && row - 1 > RESROW && i < maxrows; i--) {
+                if (freeze && currow > brrow) center_hidden_rows--;
+                else offscr_sc_rows--;
+                if ( ! row_hidden[i]) row--;
+            }
+        }
+        // Now pick up the counts again
+        for (i = 0, rows = 0, row=RESROW,   q = 0; i < maxrows && row < LINES; i++) {
+            if (i < offscr_sc_rows && ! (freeze && i >= tlrow && i <= brrow)) continue;
+            else if (freeze && i > brrow && i <= brrow + center_hidden_rows) continue;
+            else if (freeze && i < tlrow && i >= tlrow - center_hidden_rows) continue;
+            if (i < offscr_sc_rows && freeze && i >= tlrow && i <= brrow && ! row_hidden[i] ) q++;
+            rows++;
+            if (i == maxrows - 1) return rows + center_hidden_rows - q;
+            if (! row_hidden[i]) row++;
+        }
+    }
+
+    while (freeze && currow > brrow && currow <= brrow + center_hidden_rows) center_hidden_rows--;
+    return rows + center_hidden_rows - q;
+}
+
+/*
+ * this function aligns text of a cell (align = 0 center, align = 1 right, align = -1 left)
+ * and adds padding between cells.
+ * returns resulting string to be printed in screen.
+ */
+void pad_and_align (char * str_value, char * numeric_value, int col_width, int align, int padding, wchar_t * str_out) {
+    int str_len  = 0;
+    int num_len  = strlen(numeric_value);
+    str_out[0] = L'\0';
+
+    wchar_t wcs_value[BUFFERSIZE] = { L'\0' };
+    mbstate_t state;
+    size_t result;
+    const char * mbsptr;
+    mbsptr = str_value;
+
+    // Here we handle \" and replace them with "
+    int pos;
+    while ((pos = str_in_str(str_value, "\\\"")) != -1)
+        del_char(str_value, pos);
+
+    // create wcs string based on multibyte string..
+    memset( &state, '\0', sizeof state );
+    result = mbsrtowcs(wcs_value, &mbsptr, BUFFERSIZE, &state);
+    if ( result != (size_t)-1 )
+        str_len = wcswidth(wcs_value, wcslen(wcs_value));
+
+    // If padding exceedes column width, returns n number of '-' needed to fill column width
+    if (padding >= col_width ) {
+        wmemset(str_out + wcslen(str_out), L'#', col_width);
+        return;
+    }
+
+    // If content exceedes column width, outputs n number of '*' needed to fill column width
+    if (str_len + num_len + padding > col_width && ( (! atoi(get_conf_value("overlap"))) || align == 1) ) {
+        if (padding) wmemset(str_out + wcslen(str_out), L'#', padding);
+        wmemset(str_out + wcslen(str_out), L'*', col_width - padding);
+        return;
+    }
+
+    // padding
+    if (padding) swprintf(str_out, BUFFERSIZE, L"%*ls", padding, L"");
+
+    // left spaces
+    int left_spaces = 0;
+    if (align == 0 && str_len) {                           // center align
+        left_spaces = (col_width - padding - str_len) / 2;
+        if (num_len > left_spaces) left_spaces = col_width - padding - str_len - num_len;
+    } else if (align == 1 && str_len && ! num_len) {       // right align
+        left_spaces = col_width - padding - str_len;
+    }
+    while (left_spaces-- > 0) add_wchar(str_out, L' ', wcslen(str_out));
+
+    // add text
+    if (align != 1 || ! num_len)
+        swprintf(str_out + wcslen(str_out), BUFFERSIZE, L"%s", str_value);
+
+    // spaces after string value
+    int spaces = col_width - padding - str_len - num_len;
+    if (align == 1) spaces += str_len;
+    if (align == 0) spaces -= (col_width - padding - str_len) / 2;
+    while (spaces-- > 0) add_wchar(str_out, L' ', wcslen(str_out));
+
+    // add number
+    int fill_with_number = col_width - str_len - padding;
+    if (num_len && num_len >= fill_with_number) {
+        swprintf(str_out + wcslen(str_out), BUFFERSIZE, L"%.*s", fill_with_number, & numeric_value[num_len - fill_with_number]);
+    } else if (num_len) {
+        swprintf(str_out + wcslen(str_out), BUFFERSIZE, L"%s", numeric_value);
+    }
+
+    return;
+}
+
+/*
+ * Check if the buffer content is a valid command
+ * res = 0 or NO_CMD : buf has no command
+ * res = 1 or EDITION_CMD : buf has a command
+ * res = 2 or MOVEMENT_CMD : buf has a movement command or a command that do not
+ * change cell content, and should not be considered by the '.' command
+ */
 int is_single_command (struct block * buf, long timeout) {
     if (buf->value == L'\0') return NO_CMD;
     int res = NO_CMD;
@@ -1716,9 +2037,9 @@ int is_single_command (struct block * buf, long timeout) {
         else if (buf->value == L'E')        res = MOVEMENT_CMD;
         else if (buf->value == L'v')        res = MOVEMENT_CMD;
 
-        else if (buf->value == L'Q')        res = MOVEMENT_CMD;  //TEST
-        else if (buf->value == L'A')        res = MOVEMENT_CMD;  //TEST
-        else if (buf->value == L'W')        res = MOVEMENT_CMD;  //TEST
+        else if (buf->value == L'Q')        res = MOVEMENT_CMD;  /* FOR TEST PURPOSES */
+        else if (buf->value == L'A')        res = MOVEMENT_CMD;  /* FOR TEST PURPOSES */
+        else if (buf->value == L'W')        res = MOVEMENT_CMD;  /* FOR TEST PURPOSES */
 
         // movement commands
         else if (buf->value == L'j')        res = MOVEMENT_CMD;
@@ -1727,28 +2048,28 @@ int is_single_command (struct block * buf, long timeout) {
         else if (buf->value == L'l')        res = MOVEMENT_CMD;
         else if (buf->value == L'0')        res = MOVEMENT_CMD;
         else if (buf->value == L'$')        res = MOVEMENT_CMD;
-        else if (buf->value == OKEY_HOME)  res = MOVEMENT_CMD;
-        else if (buf->value == OKEY_END)   res = MOVEMENT_CMD;
+        else if (buf->value == OKEY_HOME)   res = MOVEMENT_CMD;
+        else if (buf->value == OKEY_END)    res = MOVEMENT_CMD;
         else if (buf->value == L'#')        res = MOVEMENT_CMD;
         else if (buf->value == L'^')        res = MOVEMENT_CMD;
-        else if (buf->value == OKEY_LEFT)  res = MOVEMENT_CMD;
-        else if (buf->value == OKEY_RIGHT) res = MOVEMENT_CMD;
-        else if (buf->value == OKEY_DOWN)  res = MOVEMENT_CMD;
-        else if (buf->value == OKEY_UP)    res = MOVEMENT_CMD;
-        else if (buf->value == OKEY_PGUP)  res = MOVEMENT_CMD;
-        else if (buf->value == OKEY_PGDOWN)  res = MOVEMENT_CMD;
-        else if (buf->value == ctl('f'))   res = MOVEMENT_CMD;
-        else if (buf->value == ctl('j'))   res = EDITION_CMD;
-        else if (buf->value == ctl('d'))   res = EDITION_CMD;
-        else if (buf->value == ctl('b'))   res = MOVEMENT_CMD;
-        else if (buf->value == ctl('a'))   res = MOVEMENT_CMD;
+        else if (buf->value == OKEY_LEFT)   res = MOVEMENT_CMD;
+        else if (buf->value == OKEY_RIGHT)  res = MOVEMENT_CMD;
+        else if (buf->value == OKEY_DOWN)   res = MOVEMENT_CMD;
+        else if (buf->value == OKEY_UP)     res = MOVEMENT_CMD;
+        else if (buf->value == OKEY_PGUP)   res = MOVEMENT_CMD;
+        else if (buf->value == OKEY_PGDOWN) res = MOVEMENT_CMD;
+        else if (buf->value == ctl('f'))    res = MOVEMENT_CMD;
+        else if (buf->value == ctl('j'))    res = EDITION_CMD;
+        else if (buf->value == ctl('d'))    res = EDITION_CMD;
+        else if (buf->value == ctl('b'))    res = MOVEMENT_CMD;
+        else if (buf->value == ctl('a'))    res = MOVEMENT_CMD;
         else if (buf->value == L'G')        res = MOVEMENT_CMD;
         else if (buf->value == L'H')        res = MOVEMENT_CMD;
         else if (buf->value == L'M')        res = MOVEMENT_CMD;
         else if (buf->value == L'L')        res = MOVEMENT_CMD;
-        else if (buf->value == ctl('y'))   res = MOVEMENT_CMD;
-        else if (buf->value == ctl('e'))   res = MOVEMENT_CMD;
-        else if (buf->value == ctl('l'))   res = MOVEMENT_CMD;
+        else if (buf->value == ctl('y'))    res = MOVEMENT_CMD;
+        else if (buf->value == ctl('e'))    res = MOVEMENT_CMD;
+        else if (buf->value == ctl('l'))    res = MOVEMENT_CMD;
         else if (buf->value == L'w')        res = MOVEMENT_CMD;
         else if (buf->value == L'b')        res = MOVEMENT_CMD;
         else if (buf->value == L'/')        res = MOVEMENT_CMD; // search
@@ -1757,8 +2078,8 @@ int is_single_command (struct block * buf, long timeout) {
 
         // edition commands
         else if (buf->value == L'x')        res = EDITION_CMD;  // cuts a cell
-        else if (buf->value == L'u')        res = EDITION_CMD;  // undo
-        else if (buf->value == ctl('r'))    res = EDITION_CMD;  // redo
+        else if (buf->value == L'u')        res = MOVEMENT_CMD; // undo
+        else if (buf->value == ctl('r'))    res = MOVEMENT_CMD; // redo
         else if (buf->value == L'@')        res = EDITION_CMD;  // EvalAll
         else if (buf->value == L'{')        res = EDITION_CMD;
         else if (buf->value == L'}')        res = EDITION_CMD;
@@ -1769,16 +2090,16 @@ int is_single_command (struct block * buf, long timeout) {
         else if (buf->value == L'+')        res = EDITION_CMD;
 
         else if (isdigit(buf->value) && atoi(get_conf_value("numeric")) )
-                                           res = MOVEMENT_CMD; // repeat last command
+                                            res = MOVEMENT_CMD; // repeat last command
 
         else if (buf->value == L'.')        res = MOVEMENT_CMD; // repeat last command
-        else if (buf->value == L'y' && is_range_selected() != -1) 
+        else if (buf->value == L'y' && is_range_selected() != -1)
                                             res = EDITION_CMD;  // yank range
 
     } else if (curmode == NORMAL_MODE) {
 
         if (buf->value == L'g' && bs == 2 && (
-                 buf->pnext->value == L'M' || 
+                 buf->pnext->value == L'M' ||
                  buf->pnext->value == L'g' ||
                  buf->pnext->value == L'G' ||
                  buf->pnext->value == L'0' ||
@@ -1788,16 +2109,16 @@ int is_single_command (struct block * buf, long timeout) {
 
         else if (buf->value == L'g' && bs > 2 && timeout >= COMPLETECMDTIMEOUT)
                  res = MOVEMENT_CMD; // goto cell
-                 // TODO add validation: buf->pnext->value debe ser letra
+                 // TODO add validation: buf->pnext->value must be a letter
 
         else if (buf->value == L'P' && bs == 2 && (
-            buf->pnext->value == L'v' || 
-            buf->pnext->value == L'f' || 
+            buf->pnext->value == L'v' ||
+            buf->pnext->value == L'f' ||
             buf->pnext->value == L'c' ) )   res = EDITION_CMD;  // paste yanked cells below or left
 
         else if (buf->value == L'T' && bs == 2 && (
-            buf->pnext->value == L'v' || 
-            buf->pnext->value == L'f' || 
+            buf->pnext->value == L'v' ||
+            buf->pnext->value == L'f' ||
             buf->pnext->value == L'c' ) )   res = EDITION_CMD;  // paste yanked cells above or right
 
         else if (buf->value == L'a' && bs == 2 &&    // autojus
@@ -1889,7 +2210,12 @@ int is_single_command (struct block * buf, long timeout) {
                  buf->pnext->value == L'k' ||
                  buf->pnext->value == OKEY_UP ||
                  buf->pnext->value == L'-' ||
-                 buf->pnext->value == L'+' )) res = EDITION_CMD;
+                 buf->pnext->value == L'+' ||
+                 buf->pnext->value == L'r' ||         // Freeze row / col / area
+                 buf->pnext->value == L'c' ||
+                 buf->pnext->value == L'a'
+                 )
+               ) res = EDITION_CMD;
 
     } else if (curmode == VISUAL_MODE && bs == 1) {
              if (buf->value == L'j' ||

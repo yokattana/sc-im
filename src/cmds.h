@@ -2,15 +2,13 @@
 #include <wchar.h>
 
 extern char insert_edit_submode;       // insert or edit submode
-extern WINDOW * main_win;
 extern wchar_t inputline[BUFFERSIZE];
 extern int inputline_pos;
 extern int real_inputline_pos;
 extern struct block * lastcmd_buffer;
 
-void ins_in_line(wint_t d);
 int is_single_command (struct block * buf, long timeout);
-void insert_or_edit_cell();
+void enter_cell_content(int r, int c, char * submode,  wchar_t * content);
 void send_to_interp(wchar_t * oper);   // Send command to interpreter
 void send_to_interpp(char * oper);
 void chg_mode(char strcmd);            // Change mode function
@@ -21,8 +19,10 @@ void copyent(struct ent * n, struct ent * p, int dr, int dc, int r1, int c1, int
 void flush_saved();
 void insert_row(int after);
 void insert_col(int after);
-void deleterow();
+void deleterow(int row, int mult);
+void int_deleterow(int row, int multi);
 void deletecol();
+void int_deletecol(int col, int mult);
 void formatcol(int c);
 void del_selected_cells();
 struct ent * lookat(int row, int col); // return pointer to 'ent' of cell. Create it if it doesn't exist
@@ -68,3 +68,6 @@ int fcopy();
 int fsum();
 int pad(int n, int r1, int c1, int r2, int c2);
 void mark_ent_as_deleted(register struct ent * p, int delete);
+int calc_offscr_sc_rows();
+int calc_offscr_sc_cols();
+void pad_and_align (char * str_value, char * numeric_value, int col_width, int align, int padding, wchar_t * str_out);

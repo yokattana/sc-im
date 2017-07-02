@@ -1,12 +1,12 @@
 #include <sys/time.h>
 #include <string.h>
 #include <ctype.h>   // for isdigit
-#include <ncurses.h>
 #include <stdlib.h>
 #include <wchar.h>
 #include <wctype.h>
 
-#include "screen.h"
+#include "main.h"
+#include "tui.h"
 #include "maps.h"
 #include "cmds.h"
 #include "history.h"
@@ -15,24 +15,21 @@
 #include "cmds_visual.h"
 #include "buffer.h"
 
-
-static wint_t wd;           // char read from stdin
+static wint_t wd;          // char read from stdin
 static int d;              // char read from stdin
 int return_value;          // return value of getch()
 int cmd_multiplier = 0;    // Multiplier
 int cmd_pending = 0;       // Command pending
 int shall_quit;            // Break loop if ESC key is pressed
 
-
-/* Reads stdin for a valid command.
+/*
+ * Reads stdin for a valid command.
  * Details: Read characters from stdin to a input buffer.
  * When filled up, validate the command and call the appropriate handler.
  * When a timeout is reached, flush the buffer.
-*/
+ */
 void handle_input(struct block * buffer) {
-
-    // For measuring timeout
-    struct timeval start_tv, m_tv;
+    struct timeval start_tv, m_tv; // For measuring timeout
     gettimeofday(&start_tv, NULL);
     gettimeofday(&m_tv, NULL);
     long msec = (m_tv.tv_sec - start_tv.tv_sec) * 1000L +
@@ -42,18 +39,14 @@ void handle_input(struct block * buffer) {
     cmd_pending = 0;
 
     while ( ! has_cmd(buffer, msec) && msec <= CMDTIMEOUT ) {
-
             // if command pending, refresh 'ef' only. Multiplier and cmd pending
-            if (cmd_pending) {
-                print_mult_pend(input_win);
-                wrefresh(input_win);
-            }
+            if (cmd_pending) ui_print_mult_pend();
 
             // Modify cursor state according to the current mode
-            handle_cursor();
+            ui_handle_cursor();
 
             // Read new character from stdin
-            return_value = wget_wch(input_win, & wd);
+            return_value = ui_getch(&wd);
             d = wd;
             if ( d == OKEY_ESC) {
                 break_waitcmd_loop(buffer);
@@ -75,68 +68,48 @@ void handle_input(struct block * buffer) {
                     msec = (m_tv.tv_sec - start_tv.tv_sec) * 1000L +
                            (m_tv.tv_usec - start_tv.tv_usec) / 1000L;
 
-                    print_mult_pend(input_win);
-                    wrefresh(input_win);
+                    ui_print_mult_pend();
                     continue;
             }
 
-            // Update time stap to reset timeout after each loop
-            // (Only if current mode is COMMAND, INSERT or EDIT) and for each
-            // user input as well.
+            /*
+             * Update time stap to reset timeout after each loop
+             * (Only if current mode is COMMAND, INSERT or EDIT) and for each
+             * user input as well.
+             */
             fix_timeout(&start_tv);
 
-            // Handle special characters input: BS TAG ENTER HOME END DEL PGUP
-            // PGDOWN and alphanumeric characters
+            /*
+             * Handle special characters input: BS TAG ENTER HOME END DEL PGUP
+             * PGDOWN and alphanumeric characters
+             */
             if (is_idchar(d) || return_value != -1) {
-                // If in NORMAL, VISUAL or EDITION mode , change top left corner
-                // indicator
+                // If in NORMAL, VISUAL or EDITION mode , change top left corner indicator
                 if ( (curmode == NORMAL_MODE && d >= ' ') || //FIXME
                      (curmode == EDIT_MODE   && d >= ' ') ||
                      (curmode == VISUAL_MODE && d >= ' ') ) {
                     cmd_pending = 1;
                 }
-
                 addto_buf(buffer, wd);
 
                 // Replace maps in buffer
                 replace_maps(buffer);
-
             }
 
             gettimeofday(&m_tv, NULL);
             msec = (m_tv.tv_sec - start_tv.tv_sec) * 1000L +
                    (m_tv.tv_usec - start_tv.tv_usec) / 1000L;
     }
-
-    // timeout. Command incomplete
-    if (msec >= CMDTIMEOUT) {
-
-        // No longer wait for a command, set flag.
+    if (msec >= CMDTIMEOUT) { // timeout. Command incomplete
+        cmd_pending = 0;      // No longer wait for a command, set flag.
+        cmd_multiplier = 0;   // Reset multiplier
+    } else {                  // Execute command or mapping
         cmd_pending = 0;
-
-        // Reset multiplier
-        cmd_multiplier = 0;
-
-        // Clean second line
-        //clr_header(input_win, 1); // commented on 22/06/2014
-
-    // Execute command or mapping
-    } else {
-
-        cmd_pending = 0;
-        //if (curmode == NORMAL_MODE) show_header(input_win); commented on 08/06
-
-        // Clean second line
-        clr_header(input_win, 1);
-
-        // Handle command and repeat as many times as the multiplier dictates
-        handle_mult( &cmd_multiplier, buffer, msec );
+        ui_clr_header(1);     // Clean second line
+        handle_mult( &cmd_multiplier, buffer, msec ); // Handle command and repeat as many times as the multiplier dictates
     }
-
-    print_mult_pend(input_win);
-
-    // Flush the buffer
-    flush_buf(buffer);
+    ui_print_mult_pend();
+    flush_buf(buffer);        // Flush the buffer
     return;
 }
 
@@ -148,31 +121,43 @@ void break_waitcmd_loop(struct block * buffer) {
         commandline_history->pos = 0;
         set_comp(0);
 #endif
+    } else if (curmode == INSERT_MODE) {
+#ifdef INS_HISTORY_FILE
+        del_item_from_history(insert_history, 0);
+        insert_history->pos = 0;
+#endif
     } else if (curmode == VISUAL_MODE) {
         exit_visualmode();
     }
-
-    curmode = NORMAL_MODE;
-
-    // No longer wait for command. Set flag.
-    cmd_pending = 0;
-
-    // Reset the multiplier
-    cmd_multiplier = 0;
-
-    // clean inputline
-    inputline[0] = L'\0';
-
-    flush_buf(buffer);
-    //clr_header(input_win, 0);
-    //show_header(input_win);
-    print_mult_pend(input_win);
-    update(TRUE);
+    if (curmode == INSERT_MODE && lastmode == EDIT_MODE)     {
+        if (inputline_pos && wcslen(inputline) >= inputline_pos) {
+            real_inputline_pos--;
+            int l = wcwidth(inputline[real_inputline_pos]);
+            inputline_pos -= l;
+        }
+        chg_mode(insert_edit_submode == '=' ? 'e' : 'E');
+        lastmode=NORMAL_MODE;
+        ui_show_header();
+    } else if (curmode == EDIT_MODE && lastmode == INSERT_MODE) {
+        chg_mode(insert_edit_submode);
+        lastmode=NORMAL_MODE;
+        ui_show_header();
+    } else {
+        chg_mode('.');
+        lastmode=NORMAL_MODE;
+        inputline[0] = L'\0';  // clean inputline
+        flush_buf(buffer);
+        ui_update(TRUE);
+    }
+    cmd_pending = 0;       // No longer wait for command. Set flag.
+    cmd_multiplier = 0;    // Reset the multiplier
     return;
 }
 
-// Handle timeout depending on the current mode
-// there is NO timeout for COMMAND, INSERT and EDIT modes.
+/*
+ * Handle timeout depending on the current mode
+ * there is NO timeout for COMMAND, INSERT and EDIT modes.
+ */
 void fix_timeout(struct timeval * start_tv) {
     switch (curmode) {
         case COMMAND_MODE:
@@ -187,9 +172,10 @@ void fix_timeout(struct timeval * start_tv) {
     return;
 }
 
-
-// Traverse 'stuffbuff' and determines if there  is a valid command
-// Ej. buffer = "diw"
+/*
+ * Traverse 'stuffbuff' and determines if there  is a valid command
+ * Ej. buffer = "diw"
+ */
 int has_cmd (struct block * buf, long timeout) {
     int len = get_bufsize(buf);
     if ( ! len ) return 0;
@@ -247,11 +233,10 @@ void handle_mult(int * cmd_multiplier, struct block * buf, long timeout) {
             b_copy = b_copy->pnext;
         }
     }
-
     //if (is_single_command(buf, timeout) == EDITION_CMD)
     //    copybuffer(buf, lastcmd_buffer); // save stdin buffer content in lastcmd buffer
     exec_mult(buf, timeout);
-    if (*cmd_multiplier > 1) { *cmd_multiplier = 1; update(TRUE); }
+    if (*cmd_multiplier > 1) { *cmd_multiplier = 1; ui_update(TRUE); }
     *cmd_multiplier = 0;
 
     return;
@@ -265,7 +250,6 @@ void exec_mult (struct block * buf, long timeout) {
     // Try to execute the whole buffer content
     if ((res = is_single_command(buf, timeout))) {
         if (res == EDITION_CMD) copybuffer(buf, lastcmd_buffer); // save stdin buffer content in lastcmd buffer
-        //cmd_multiplier--;
         exec_single_cmd(buf);
 
     // If not possible, traverse blockwise
@@ -276,12 +260,9 @@ void exec_mult (struct block * buf, long timeout) {
 
             if ((res = is_single_command(auxb, timeout))) {
                 if (res == EDITION_CMD) copybuffer(buf, lastcmd_buffer); // save stdin buffer content in lastcmd buffer
-                //cmd_multiplier--;
                 exec_single_cmd(auxb);
                 flush_buf(auxb);
-
-                // Take the first K values from 'buf'
-                k++;
+                k++; // Take the first K values from 'buf'
                 while ( k-- ) buf = dequeue(buf);
                 // Execute again
                 if (cmd_multiplier == 0) break;

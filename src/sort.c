@@ -1,6 +1,4 @@
-/*
-Adaptation of Chuck Martin's code - <nrocinu@myrealbox.com>
- */
+/* Adaptation of Chuck Martin's code - <nrocinu@myrealbox.com> */
 
 #include <sys/types.h>
 #include <string.h>
@@ -8,12 +6,12 @@ Adaptation of Chuck Martin's code - <nrocinu@myrealbox.com>
 #include <ctype.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include <ncurses.h>
+
 #include "macros.h"
 #include "yank.h"
 #include "cmds.h"
 #include "conf.h"
-#include "color.h"   // for set_ucolor
+#include "color.h"
 #include "xmalloc.h" // for scxfree
 
 int compare(const void * row1, const void * row2);

@@ -40,6 +40,11 @@ functional similarities with vim text editor.
 .TP
 .IR FILE
 The input file from where to read the spreadsheet.
+.SS "Version"
+.TP
+.BR \-\^\-version
+Print the version number of Sc-im and exit.
+It also shows which features were enabled when Sc-im was compiled.
 
 .SS "External scripts"
 .TP
@@ -171,7 +176,7 @@ The editing in this mode is vi-like.
 .TP
 .BR E
 Edit the string associated with the current cell.
-This is identical to ``<'', ``"'', or ``>''
+This is identical to ``<'', ``\\'', or ``>''
 except that the command line starts out containing
 the old string value or expression associated with the cell.
 The editing in this mode is vi-like.

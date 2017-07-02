@@ -1,5 +1,3 @@
-NAME = SC-IM
-
 # Specify the name of the resulting executable file
 name = scim
 
@@ -11,7 +9,7 @@ HELPDIR = $(prefix)/share/$(name)
 LIBDIR  = $(prefix)/share/doc/$(name)
 
 # This is where the man page goes.
-MANDIR  = $(prefix)/man/man1
+MANDIR  = $(prefix)/share/man/man1
 
 # Change these to your liking or use `make CC=gcc` etc
 #CC   = cc
@@ -20,7 +18,7 @@ MANDIR  = $(prefix)/man/man1
 
 ifeq ($(shell uname -s),Darwin)
   NCURSES_CFLAGS ?=
-  NCURSES_LIBS   ?= -lncurses
+  NCURSES_LIBS   ?= -lncursesw
 else ifeq ($(shell pkg-config --exists ncursesw || echo 'no'),no)
   NCURSES_CFLAGS ?=
   NCURSES_LIBS   ?= -lncursesw
@@ -33,17 +31,22 @@ LDLIBS += -lm $(NCURSES_LIBS)
 
 CFLAGS += -Wall -g
 CFLAGS += $(NCURSES_CFLAGS)
+CFLAGS += -DNCURSES
 CFLAGS += -D_XOPEN_SOURCE_EXTENDED -D_GNU_SOURCE
-CFLAGS += -DSNAME=\"$(NAME)\"
+CFLAGS += -DSNAME=\"$(name)\"
 CFLAGS += -DHELP_PATH=\"$(HELPDIR)\"
 CFLAGS += -DLIBDIR=\"$(LIBDIR)\"
 
 # Sets default pager, e.g. 'less' or 'more'
 CFLAGS += -DDFLT_PAGER=\"less\"
+# Sets default editor. Its use in case EDITOR env variable is not set
+CFLAGS += -DDFLT_EDITOR=\"vim\"
 # Comment out to disable color support
 CFLAGS += -DUSECOLORS
 # Command history file, relative to home directory. Comment out to disable commandline history
 CFLAGS += -DHISTORY_FILE=\".$(name)info\"
+# Input mode history. Same as previous, but for insert mode commands
+CFLAGS += -DINS_HISTORY_FILE=\".$(name)info\"
 # Comment out to disable undo/redo support
 CFLAGS += -DUNDO
 # Maximum number of rows in spreadsheet. Up to 1048576
@@ -51,14 +54,65 @@ CFLAGS += -DMAXROWS=65536
 # Used for date formatting with C-d shortcut using you local d_fmt
 CFLAGS += -DUSELOCALE
 
+# Clipboard support is OS dependent.
+#
+# Choose one of the following commands for copying to different clipboards:
+# You can later change it at runtime.
+#to copy to tmux clipboard:
+CFLAGS += -DDEFAULT_COPY_TO_CLIPBOARD_CMD=\""tmux load-buffer"\"
+#to copy to X clipboard:
+#CFLAGS += -DDEFAULT_COPY_TO_CLIPBOARD_CMD=\""xclip -i -selection clipboard <"\"
+#to copy to OSX clipboard:
+#CFLAGS += -DDEFAULT_COPY_TO_CLIPBOARD_CMD=\""pbcopy <"\"
+#
+# Choose one of the proposed commands for pasting from different clipboards:
+# You can later change it at runtime.
+CFLAGS += -DDEFAULT_PASTE_FROM_CLIPBOARD_CMD=\""tmux show-buffer"\"
+#CFLAGS += -DDEFAULT_PASTE_FROM_CLIPBOARD_CMD=\""xclip -o -selection clipboard"\"
+#CFLAGS += -DDEFAULT_PASTE_FROM_CLIPBOARD_CMD=\""pbpaste"\"
+
 # Uncomment for basic XLS import. Requires libxlsreader
 #CFLAGS += -DXLS
 #LDLIBS += -lxlsreader
 
-# Uncomment for basic XLSX support. Requires libzip and libxml2
-#CFLAGS += -DXLSX -I/usr/include/libxml2
-#LDLIBS += -lzip -lxml2
+# Autobackup. If you unset this, no backup check nor autobackup feature will be available.
+CFLAGS += -DAUTOBACKUP
+# Have threads? Set these two, if you want the autobackup feature to work with threads.
+CFLAGS += -DHAVE_PTHREAD
+ifneq ($(shell uname -s),Darwin)
+LDLIBS += -pthread
+endif
 
+# NOTE: libxml and libzip are required for xlsx file import support
+ifneq ($(shell pkg-config --exists libzip libxml-2.0 || echo 'no'),no)
+CFLAGS += -DXLSX $(shell pkg-config --cflags libxml-2.0 libzip)
+LDLIBS += $(shell pkg-config --libs libxml-2.0 libzip)
+endif
+
+# NOTE: libxlsxwriter is required for xlsx file export support
+ifneq (,$(wildcard /usr/include/xlsxwriter.h))
+CFLAGS += -DXLSX_EXPORT
+LDLIBS += -lxlsxwriter
+endif
+
+# NOTE: lua support
+ifneq ($(shell pkg-config --exists lua51 || echo 'no'),no)
+CFLAGS += -DXLUA $(shell pkg-config --cflags lua51)
+LDLIBS += $(shell pkg-config --libs lua51) -Wl,--export-dynamic
+else ifneq ($(shell pkg-config --exists lua-5.1 || echo 'no'),no) # FreeBSD
+CFLAGS += -DXLUA $(shell pkg-config --cflags lua-5.1)
+LDLIBS += $(shell pkg-config --libs lua-5.1) -Wl,--export-dynamic
+endif
+
+# dynamic linking (should not be used in FreeBSD
+ifneq ($(shell uname -s),FreeBSD)
+LDLIBS += -ldl
+endif
+
+# Check for gnuplot existance
+ifneq (, $(shell which gnuplot))
+CFLAGS += -DGNUPLOT
+endif
 OBJS = $(patsubst %.c, %.o, $(wildcard *.c) $(wildcard utils/*.c)) gram.o
 
 .PHONY : all clean install
@@ -70,19 +124,21 @@ install :
 	install $(name) $(DESTDIR)$(prefix)/bin/$(name)
 	install -d $(DESTDIR)$(HELPDIR)
 	install doc $(DESTDIR)$(HELPDIR)/$(name)_help
-	install -d $(DESTDIR)$(prefix)/share/man/man1
-	install -m 644 sc-im.1 $(DESTDIR)$(prefix)/share/man/man1/$(name).1
+	install plot_* $(DESTDIR)$(HELPDIR)/
+	install -d $(DESTDIR)$(MANDIR)/
+	install -m 644 sc-im.1 $(DESTDIR)$(MANDIR)/$(name).1
 
 uninstall :
 	-rm $(DESTDIR)$(prefix)/bin/$(name)
 	-rm $(DESTDIR)$(HELPDIR)/$(name)_help
-	-rm $(DESTDIR)$(prefix)/share/man/man1/$(name).1
+	-rm $(DESTDIR)$(HELPDIR)/plot*
+	-rm $(DESTDIR)$(MANDIR)/$(name).1
 
 $(name) : $(OBJS)
-	$(CC) $(LDFLAGS) $^ -o $@ $(LDLIBS) 
+	$(CC) $(LDFLAGS) $^ -o $@ $(LDLIBS)
 
 $(name)qref: sc.h
-	$(CC) $(CFLAGS) $(LDFLAGS) -DQREF $(QREF_FMT) -DSCNAME=\"$(NAME)\" -o $(name)qref help.c $(LDLIBS)
+	$(CC) $(CFLAGS) $(LDFLAGS) -DQREF $(QREF_FMT) -DSCNAME=\"$(name)\" -o $(name)qref help.c $(LDLIBS)
 
 $(OBJS) : y.tab.h experres.h statres.h
 
@@ -104,5 +160,5 @@ statres.h : gram.y
 clean:
 	rm -f $(OBJS)
 	rm -f *res.h $(YTAB).h
-	rm -f debug core gram.c y.output pxmalloc.c pvmtbl.c tags $(name)qref
+	rm -f core gram.c y.output pxmalloc.c pvmtbl.c tags $(name)qref
 	rm -f qhelp.c $(name)

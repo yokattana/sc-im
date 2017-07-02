@@ -1,14 +1,15 @@
 #include <stdio.h>
-#include <ncurses.h>
+#include <stdlib.h> // for atoi
 #include <unistd.h>
+
 #include "vmtbl.h"
 #include "sc.h"
 #include "macros.h"
-#include "color.h"  // for set_ucolor
-#include "conf.h"   // for set_ucolor
-#include <stdlib.h> // for atoi
+#include "conf.h"
+#include "trigger.h"
+#include "tui.h"
 
-//LINUX - PSC not def
+#define ATBL_P(tbl, row, col)    (*(tbl + row) + (col))
 
 /*
  * check to see if *rowp && *colp are currently allocated, if not expand the
@@ -166,7 +167,7 @@ int growtbl(int rowcol, int toprow, int topcol) {
                 sc_error(nowider);
                 return(FALSE);
             }
-            for (nullit = ATBL(tbl, i, maxcols), cnt = 0; cnt < newcols - maxcols; cnt++, nullit++)
+            for (nullit = ATBL_P(tbl, i, maxcols), cnt = 0; cnt < newcols - maxcols; cnt++, nullit++)
                 *nullit = (struct ent *)NULL;
         /*        memset((char *) ATBL(tbl,i, maxcols), 0, (newcols - maxcols) * sizeof(struct ent **)); */
         }
@@ -182,7 +183,7 @@ int growtbl(int rowcol, int toprow, int topcol) {
         }
         for (nullit = tbl[i], cnt = 0; cnt < newcols; cnt++, nullit++)
             *nullit = (struct ent *)NULL;
-/*    memset((char *) tbl[i], 0, newcols * sizeof(struct ent **));*/
+        /* memset((char *) tbl[i], 0, newcols * sizeof(struct ent **));*/
     }
 
     maxrows = newrows;
@@ -195,4 +196,13 @@ int growtbl(int rowcol, int toprow, int topcol) {
 
     maxcols = newcols;
     return (TRUE);
+}
+
+struct ent ** ATBL(struct ent ***tbl, int row, int col) {
+    struct ent **ent=(*(tbl+row)+(col));
+    struct ent *v= *ent;
+
+    if ((v) && (v->trigger) && ((v->trigger->flag & TRG_READ) == TRG_READ))
+          do_trigger(v,TRG_READ);
+    return ent;
 }

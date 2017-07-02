@@ -1,19 +1,4 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include "dep_graph.h"
-#include "interp.h"
-#include "screen.h"    // for show_text
-#include "sc.h"
-#include <setjmp.h>
-#include "xmalloc.h" // for scxfree
-#include <math.h>
-#include "macros.h"
-
-extern jmp_buf fpe_save;
-extern int cellerror;    /* is there an error in this cell */
-
-
-/******************************************************************************
+/*
  * This file contains all functions used for maintaining a dependence graph
  * that keeps track of all the cells that depends on each other.
  * this is done in a two way relationship.
@@ -24,8 +9,26 @@ extern int cellerror;    /* is there an error in this cell */
  * there you will keep linked all the vertex's that use the first vertex in their formulas.
  * In other words, you will keep track of all the vertex's that depends on the first vertex.
  *
- * NOTE: an orphan vertex represents an ent that has an enode thats need to be evaluated, but do not depend in another cell.
- *******************************************************************************/
+ * NOTE: an orphan vertex represents an ent that has an enode thats need to be evaluated,
+ * but do not depend in another cell.
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <setjmp.h>
+#include <math.h>
+
+#include "dep_graph.h"
+#include "interp.h"
+#include "tui.h"    // for show_text
+#include "sc.h"
+#include "xmalloc.h"   // for scxfree
+#include "macros.h"
+#include "trigger.h"
+
+extern jmp_buf fpe_save;
+extern int cellerror;    /* is there an error in this cell */
+
 #define CREATE_NEW(type) (type *) malloc(sizeof(type))
 
 #define APPEND_TO_LINKLIST(firstNode, newNode, tempNode) \
@@ -40,11 +43,6 @@ extern int cellerror;    /* is there an error in this cell */
       tempNode->next = newNode; \
    }
 
-/*  LINKS:
- *  https://www.cs.bu.edu/teaching/c/graph/linked/
- *  https://github.com/Chetan496/cpp-algortihms/blob/master/graph.c
- */
-
 graphADT graph;
 
 /* Creates an empty graph, with no vertices. Allocate memory from the heap */
@@ -54,7 +52,8 @@ graphADT GraphCreate() {
    return emptyGraph;
 }
 
-/* this adds the vertex sorted in the list
+/*
+ * this adds the vertex sorted in the list
  * and not at the end
  * given a row & col to insert as a new vertex, this function will create a new vertex with those values
  * and add it order in the list!
@@ -96,7 +95,8 @@ vertexT * GraphAddVertex(graphADT graph , struct ent * ent) {
 }
 
 
-/* This looks for a vertex representing a specific ent in a sorted list
+/*
+ * This looks for a vertex representing a specific ent in a sorted list
  * we search for a vertex in graph and return it if found.
  * if not found and create flag, we add the vertex (malloc it) and return it
  * else if not found, it returns NULL
@@ -109,14 +109,18 @@ vertexT * getVertex(graphADT graph, struct ent * ent, int create) {
        temp = temp->next;
    }
 
-   // if we get to here, there is not vertex representing ent
-   // we add it if create is set to true!
+   /*
+    * if we get to here, there is not vertex representing ent
+    * we add it if create is set to true!
+    */
    return create ? GraphAddVertex(graph, ent) : NULL;
 }
 
 
-/* This function adds a edge in our graph from the vertex "from" to the vertex "to" */
-// should add edges ordered in list ?
+/*
+ * This function adds a edge in our graph from the vertex "from" to the vertex "to"
+ * should add edges ordered in list ?
+ */
 void GraphAddEdge(vertexT * from, vertexT * to) {
    if (from == NULL || to == NULL) {
       sc_info("Error while adding edge: either of the vertices do not exist") ;
@@ -159,39 +163,72 @@ void markAllVerticesNotVisited () {
 }
 
 
-// print vertices
+// print vertexs
 void print_vertexs() {
-   char det[20000] = ""; // TODO: - improve: malloc, remalloc and free dinamically
+   char det[BUFFERSIZE] = "";
    if (graph == NULL) {
        strcpy(det, "Graph is empty");
-       show_text((char *) &det);
+       ui_show_text((char *) &det);
        return;
    }
-
    vertexT * temp = graph->vertices;
    edgeT * etemp;
    det[0]='\0';
+   int msg_size = BUFFERSIZE;
+   char * msg = (char *) malloc(msg_size);
+   msg[0]='\0';
+   strcpy(msg, "Content of graph:\n");
+
    while (temp != NULL) {
       sprintf(det + strlen(det), "%d %d\n", temp->ent->row, temp->ent->col);
       etemp = temp->edges;
+
+      /* check not overflow msg size. if so, just realloc. */
+      if (strlen(det) + strlen(msg) > msg_size) {
+          sc_debug("realloc"),
+          msg_size += BUFFERSIZE;
+          msg = (char *) realloc(msg, msg_size);
+      }
+      sprintf(msg + strlen(msg), "%s", det);
+      det[0]='\0';
+      /**/
       while (etemp != NULL) {
           sprintf(det + strlen(det), "    \\-> depends on the following ents: %d %d\n", etemp->connectsTo->ent->row, etemp->connectsTo->ent->col);
           etemp = etemp->next;
+
+          /* check not overflow msg size. if so, just realloc. */
+          if (strlen(det) + strlen(msg) > msg_size) {
+              msg_size += BUFFERSIZE;
+              msg = (char *) realloc(msg, msg_size);
+          }
+          sprintf(msg + strlen(msg), "%s", det);
+          det[0]='\0';
+          /**/
       }
       etemp = temp->back_edges;
       while (etemp != NULL) {
           sprintf(det + strlen(det), "edges that depend on that ent: \\-> %d %d\n", etemp->connectsTo->ent->row, etemp->connectsTo->ent->col);
           etemp = etemp->next;
-      }
 
+          /* check not overflow msg size. if so, just realloc. */
+          if (strlen(det) + strlen(msg) > msg_size) {
+              msg_size += BUFFERSIZE;
+              msg = (char *) realloc(msg, msg_size);
+          }
+          sprintf(msg + strlen(msg), "%s", det);
+          det[0]='\0';
+          /**/
+      }
       temp = temp->next;
    }
-   show_text((char *) &det);
+   ui_show_text((char *) msg);
+   free(msg);
    return;
 }
 
 
-/* this function frees the memory of vertex's edges.
+/*
+ * this function frees the memory of vertex's edges.
  * this also frees the vertex itself, but only if it has no back_dependences.
  * the only parameter is an ent pointer.
  */
@@ -253,10 +290,12 @@ void destroy_vertex(struct ent * ent) {
 }
 
 
-// for each edge in edges, we look for the reference to the vertex we are deleting and we erase it!
-// v_cur is the reference
-// if back_reference is set, the delete is done over the back_edges list
-// if not, it is done over edges list.
+/*
+ * for each edge in edges, we look for the reference to the vertex we are deleting and we erase it!
+ * v_cur is the reference
+ * if back_reference is set, the delete is done over the back_edges list
+ * if not, it is done over edges list.
+ */
 void delete_reference(vertexT * v_cur, vertexT * vc, int back_reference) {
     if (v_cur == NULL || vc == NULL) return;
 //  sc_debug("we follow %d %d", vc->ent->row, vc->ent->col);
@@ -377,7 +416,6 @@ void EvalJustOneVertex(register struct ent * p, int i, int j, int rebuild_graph)
             return;
         if ( !p->label || !v || strcmp(v, p->label) != 0 || cellerror) {
             p->flags |= is_changed;
-            changed++;
         }
         if (p->label)
             scxfree(p->label);
@@ -399,7 +437,8 @@ void EvalJustOneVertex(register struct ent * p, int i, int j, int rebuild_graph)
             p->cellerror = cellerror;
             p->v = v;
             p->flags |= is_changed | is_valid;
-            changed++;
+            if (( p->trigger  ) && ((p->trigger->flag & TRG_WRITE) == TRG_WRITE))
+                do_trigger(p,TRG_WRITE);
         }
     }
 }
@@ -407,11 +446,11 @@ void EvalJustOneVertex(register struct ent * p, int i, int j, int rebuild_graph)
 
 
 
-/**********************************************************************************
+/*
  * the folowing functions and variables are used for ent_that_depends_on function.
  * the last is used to get the list of ents that depends on an specific ent
  * the result is saved in a list of ents.
- **********************************************************************************/
+ */
 struct ent_ptr * deps = NULL;
 int dep_size = 0;
 
@@ -433,9 +472,11 @@ void ents_that_depends_on (struct ent * ent) {
    return;
 }
 
-// This method returns if a vertex called dest is reachable from the vertex called src
-// (if back_dep is set to false).
-// if back_dep is set to true, the relationship is evaluated in the opposite way.
+/*
+ * This method returns if a vertex called dest is reachable from the vertex called src
+ * (if back_dep is set to false).
+ * if back_dep is set to true, the relationship is evaluated in the opposite way.
+ */
 int GraphIsReachable(vertexT * src, vertexT * dest, int back_dep) {
    if (src == dest) {
        return 1;
@@ -462,8 +503,10 @@ int GraphIsReachable(vertexT * src, vertexT * dest, int back_dep) {
    return 0;
 }
 
-// this checks dependency of a range of ents
-// keep the ents in "deps" lists
+/*
+ * this checks dependency of a range of ents
+ * keep the ents in "deps" lists
+ */
 void ents_that_depends_on_range (int r1, int c1, int r2, int c2) {
         if (graph == NULL) return;
 
@@ -484,6 +527,3 @@ void ents_that_depends_on_range (int r1, int c1, int r2, int c2) {
         }
         return;
 }
-/*******************************************************************/
-
-

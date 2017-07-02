@@ -1,13 +1,12 @@
-#include <ncurses.h>
 #include <stdlib.h>
+
 #include "utils/string.h"
-#include "screen.h"
+#include "tui.h"
 #include "buffer.h"
 #include "marks.h"
 #include "macros.h"
 #include "cmds.h"
 #include "conf.h"
-#include "color.h"       // for set_ucolor
 #include "hide_show.h"
 #include "shift.h"
 #include "yank.h"
@@ -23,7 +22,6 @@ extern int cmd_multiplier;
 extern struct history * commandline_history;
 
 char visual_submode = '0';
-
 srange * r;                       // SELECTED RANGE!
 int moving = FALSE;
 
@@ -55,9 +53,10 @@ void start_visualmode(int tlrow, int tlcol, int brrow, int brcol) {
     }
 
     if (visual_submode == '0') {  // Started visual mode with 'v' command
-        update(TRUE);
+        ui_update(TRUE);
+        moving = FALSE;
     } else {                      // Started visual mode with 'C-v' command
-        update(FALSE);
+        ui_update(TRUE);
         moving = TRUE;
     }
     return;
@@ -74,6 +73,7 @@ void exit_visualmode() {
 }
 
 void do_visualmode(struct block * buf) {
+    // we are moving (previous to a 'C-o' keypress)
     if (moving == TRUE) {
         switch (buf->value) {
             case L'j':
@@ -112,12 +112,14 @@ void do_visualmode(struct block * buf) {
         r->brrow = currow;
         r->brcol = curcol;
 
-        update(FALSE);
+        ui_update(FALSE);
         return;
     }
 
-    // ENTER - ctl(k) - Confirm selection
-    if (buf->value == OKEY_ENTER || buf->value == ctl('k')) {
+    // started visual mode with 'C-v'
+    // ENTER or 'C-k' : Confirm selection
+    // 'C-k' only works if started visualmode with 'C-v'
+    if ((buf->value == OKEY_ENTER || buf->value == ctl('k')) && visual_submode != '0') {
         wchar_t cline [BUFFERSIZE];
         swprintf(cline, BUFFERSIZE, L"%ls%d", coltoa(r->tlcol), r->tlrow);
         if (r->tlrow != r->brrow || r->tlcol != r->brcol)
@@ -131,7 +133,7 @@ void do_visualmode(struct block * buf) {
         exit_visualmode();
         chg_mode(c);
 
-        show_header(input_win);
+        ui_show_header();
         return;
 
     // moving to TRUE
@@ -316,17 +318,15 @@ void do_visualmode(struct block * buf) {
         srange * rn = create_range('\0', '\0', lookat(r->tlrow, r->tlcol), lookat(r->brrow, r->brcol));
         set_range_mark(buf->pnext->value, rn);
         exit_visualmode();
-        curmode = NORMAL_MODE;
-        clr_header(input_win, 0);
-        show_header(input_win);
+        chg_mode('.');
+        ui_show_header();
 
     // auto_justify
     } else if (buf->value == ctl('j')) {
         auto_justify(r->tlcol, r->brcol, DEFWIDTH);  // auto justify columns
         exit_visualmode();
-        curmode = NORMAL_MODE;
-        clr_header(input_win, 0);
-        show_header(input_win);
+        chg_mode('.');
+        ui_show_header();
 
     // datefmt with locale D_FMT format
     } else if (buf->value == ctl('d')) {
@@ -347,9 +347,8 @@ void do_visualmode(struct block * buf) {
             }
             dateformat(lookat(r->tlrow, r->tlcol), lookat(r->brrow, r->brcol), f);
         exit_visualmode();
-        curmode = NORMAL_MODE;
-        clr_header(input_win, 0);
-        show_header(input_win);
+        chg_mode('.');
+        ui_show_header();
         #else
             sc_info("Build made without USELOCALE enabled");
         #endif
@@ -360,9 +359,8 @@ void do_visualmode(struct block * buf) {
         yank_area(r->tlrow, r->tlcol, r->brrow, r->brcol, 'a', 1);
 
         exit_visualmode();
-        curmode = NORMAL_MODE;
-        clr_header(input_win, 0);
-        show_header(input_win);
+        chg_mode('.');
+        ui_show_header();
 
     // left / right / center align
     } else if (buf->value == L'{' || buf->value == L'}' || buf->value == L'|') {
@@ -387,9 +385,8 @@ void do_visualmode(struct block * buf) {
         cmd_multiplier = 0;
 
         exit_visualmode();
-        curmode = NORMAL_MODE;
-        clr_header(input_win, 0);
-        show_header(input_win);
+        chg_mode('.');
+        ui_show_header();
 
     // range lock / unlock // valueize
     } else if ( buf->value == L'r' && (buf->pnext->value == L'l' || buf->pnext->value == L'u' ||
@@ -404,9 +401,8 @@ void do_visualmode(struct block * buf) {
         cmd_multiplier = 0;
 
         exit_visualmode();
-        curmode = NORMAL_MODE;
-        clr_header(input_win, 0);
-        show_header(input_win);
+        chg_mode('.');
+        ui_show_header();
 
     // Zr Zc - Zap col or row
     } else if ( (buf->value == L'Z' || buf->value == L'S') && (buf->pnext->value == L'c' || buf->pnext->value == L'r')) {
@@ -423,98 +419,38 @@ void do_visualmode(struct block * buf) {
         cmd_multiplier = 0;
 
         exit_visualmode();
-        curmode = NORMAL_MODE;
-        clr_header(input_win, 0);
-        show_header(input_win);
+        chg_mode('.');
+        ui_show_header();
 
     // delete selected range
     } else if (buf->value == L'x' || (buf->value == L'd' && buf->pnext->value == L'd') ) {
         del_selected_cells();
-
         exit_visualmode();
-        curmode = NORMAL_MODE;
-        clr_header(input_win, 0);
-        show_header(input_win);
+        chg_mode('.');
+        ui_show_header();
 
     // shift range
     } else if (buf->value == L's') {
-        int ic = cmd_multiplier + 1;
-        if ( any_locked_cells(r->tlrow, r->tlcol, r->brrow, r->brcol) &&
-           (buf->pnext->value == L'h' || buf->pnext->value == L'k') ) {
-            sc_error("Locked cells encountered. Nothing changed");
-            return;
-        }
-#ifdef UNDO
-        create_undo_action();
-#endif
-        switch (buf->pnext->value) {
-            case L'j':
-                    fix_marks(  (r->brrow - r->tlrow + 1) * cmd_multiplier, 0, r->tlrow, maxrow, r->tlcol, r->brcol);
-#ifdef UNDO
-                    save_undo_range_shift(cmd_multiplier, 0, r->tlrow, r->tlcol, r->brrow + (r->brrow-r->tlrow+1) * (cmd_multiplier - 1), r->brcol);
-#endif
-                    while (ic--) shift_range(ic, 0, r->tlrow, r->tlcol, r->brrow, r->brcol);
-                    break;
-            case L'k':
-                    fix_marks( -(r->brrow - r->tlrow + 1) * cmd_multiplier, 0, r->tlrow, maxrow, r->tlcol, r->brcol);
-                    yank_area(r->tlrow, r->tlcol, r->brrow + (r->brrow-r->tlrow+1) * (cmd_multiplier - 1), r->brcol, 'a', cmd_multiplier); // keep ents in yanklist for sk
-#ifdef UNDO
-                    copy_to_undostruct(r->tlrow, r->tlcol, r->brrow + (r->brrow-r->tlrow+1) * (cmd_multiplier - 1), r->brcol, 'd');
-                    save_undo_range_shift(-cmd_multiplier, 0, r->tlrow, r->tlcol, r->brrow + (r->brrow-r->tlrow+1) * (cmd_multiplier - 1), r->brcol);
-#endif
-                    while (ic--) shift_range(-ic, 0, r->tlrow, r->tlcol, r->brrow, r->brcol);
-#ifdef UNDO
-                    copy_to_undostruct(r->tlrow, r->tlcol, r->brrow + (r->brrow-r->tlrow+1) * (cmd_multiplier - 1), r->brcol, 'a');
-#endif
-                    break;
-            case L'h':
-                    fix_marks(0, -(r->brcol - r->tlcol + 1) * cmd_multiplier, r->tlrow, r->brrow, r->tlcol, maxcol);
-                    yank_area(r->tlrow, r->tlcol, r->brrow, r->brcol + (r->brcol-r->tlcol+1) * (cmd_multiplier - 1), 'a', cmd_multiplier); // keep ents in yanklist for sk
-#ifdef UNDO
-                    copy_to_undostruct(r->tlrow, r->tlcol, r->brrow, r->brcol + (r->brcol-r->tlcol+1) * (cmd_multiplier - 1), 'd');
-                    save_undo_range_shift(0, -cmd_multiplier, r->tlrow, r->tlcol, r->brrow, r->brcol + (r->brcol-r->tlcol+1) * (cmd_multiplier - 1));
-#endif
-                    while (ic--) shift_range(0, -ic, r->tlrow, r->tlcol, r->brrow, r->brcol);
-#ifdef UNDO
-                    copy_to_undostruct(r->tlrow, r->tlcol, r->brrow, r->brcol + (r->brcol-r->tlcol+1) * (cmd_multiplier - 1), 'a');
-#endif
-                    break;
-            case L'l':
-                    fix_marks(0,  (r->brcol - r->tlcol + 1) * cmd_multiplier, r->tlrow, r->brrow, r->tlcol, maxcol);
-#ifdef UNDO
-                    save_undo_range_shift(0, cmd_multiplier, r->tlrow, r->tlcol, r->brrow, r->brcol + (r->brcol-r->tlcol+1) * (cmd_multiplier - 1));
-#endif
-                    while (ic--) shift_range(0, ic, r->tlrow, r->tlcol, r->brrow, r->brcol);
-                    break;
-        }
-        cmd_multiplier = 0;
-#ifdef UNDO
-        end_undo_action();
-#endif
-
+        shift(r->tlrow, r->tlcol, r->brrow, r->brcol, buf->pnext->value);
         exit_visualmode();
-        curmode = NORMAL_MODE;
-        clr_header(input_win, 0);
-        show_header(input_win);
+        chg_mode('.');
+        ui_show_header();
 
     } else if (buf->value == L':') {
-        clr_header(input_win, 0);
-        wrefresh(input_win);
         chg_mode(':');
+        ui_show_header();
 #ifdef HISTORY_FILE
         add(commandline_history, L"");
 #endif
-        print_mode(input_win);
-        wrefresh(input_win);
-        handle_cursor();
+        ui_handle_cursor();
         inputline_pos = 0;
         real_inputline_pos = 0;
         return;
     }
 
     if (visual_submode == '0')
-        update(TRUE);
+        ui_update(TRUE);
     else {
-        update(FALSE);
+        ui_update(FALSE);
     }
 }

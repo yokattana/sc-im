@@ -5,7 +5,7 @@ You can also use the <ENTER> key to go one line down and <DEL> to go up.
 
 <SPACE> moves a page down, while <C-f> and <C-b> move half page down or up.
 
-'G' moves to bottom, and <C-a> to the beginning of the text.
+'G' moves to bottom, and <C-a> or 'gg' to the beginning of the text.
 
 Use '/' to search for a pattern in the help.
 
@@ -53,7 +53,7 @@ Navigation commands:
      M           Go to the middle row on the screen.
      gg    c-a   Go to the first cell of sheet.
      G     gG    Go to last valid cell of sheet.
-     gl          Go to the last (prevously occupied) cell position.
+     gl          Go to the last (previously occupied) cell position.
      c-f   c-b   Scrolls down and up full screen.
                  :set half_page_scroll=1 to scroll by half a page instead.
                  half_page_scroll=0 (default) scrolls by a full page.
@@ -63,14 +63,14 @@ Navigation commands:
      zl          Scroll right one column.
      zH          Scroll left half a page.
      zL          Scroll right half page.
-     zz          Scroll vertically to position the selected cell at the middle
+     zm          Scroll horizontally to position the selected cell at the
+                 center of the screen.
+     zz or z.    Scroll vertically to position the selected cell at the middle
                  of the screen.
      zt          Scroll vertically to position the selected cell at the top
                  of the screen.
      zb          Scroll vertically to position the selected cell at the bottom
                  of the screen.
-     zm          Scroll horizontally to position the selected cell at the
-                 center of the screen.
      Vir         Select the smallest range that covers all valid cells.
 
 
@@ -95,6 +95,13 @@ Commands for handling cell content:
      f- , fj , f-DOWN:       Change cell format: Decrement decimal precision.
      f< , fh , f-LEFT:       Change cell format: Decrement column width.
      f> , fl , f-RIGHT:      Change cell format: Increment column width.
+
+     fr          Freeze a row or the rows selected.
+                 If none is selected it freezes the current row.
+                 NOTE: there can be only just one frozen range defined.
+     fc          Freeze a col or the cols selected.
+                 If none is selected it freezes the current col.
+     fa          Freeze the area selected.
 
      ir          Insert a row.
      ic          Insert a column.
@@ -220,7 +227,8 @@ Commands for handling cell content:
                  Input numbers, letters and operators.
      <BS>, <DELETE>
                  Delete the character after or before the cursor.
-     <ESC>       Go back to Normal mode.
+     <ESC>       Go back to NORMAL MODE. If you were in EDIT MODE before,
+                 it goes back to that mode, instead of NORMAL MODE.
      c-r{a-zA-Z}
                  If the character is a mark of a cell or range, the range
                  represented is inserted into the field.
@@ -288,7 +296,8 @@ Commands for handling cell content:
      D           Delete from the current cursor position to end of line.
      <SPACE>     Add a space under the cursor.
      <ENTER>     Confirm changes.
-
+     <ESC>       Go back to NORMAL MODE. If you were in INSERT MODE before,
+                 it goes back to that mode, instead of NORMAL MODE.
 ==============================================================================
 &COMMAND MODE&
 
@@ -328,11 +337,22 @@ Commands for handling cell content:
 
      :load {file}
                  Load {file} into the SC-IM database.
+
+                 {file} can be an sc format file (.sc), a comma-separated file (.csv),
+                 a tab-separated file (.tab, .tsv), an xlsx or xls file.
+
+                 If loading a csv, tab or tsv file and 'import_delimited_as_text' configuration variable is set
+                 Sc-im will import numbers as text.
+
+                 If loading an xlsx file and 'xlsx_readformulas' is set, Sc-im will try to import
+                 formulas, rather than the final values of a cell.
+
      :load! {file}
                  Same as previous, but ignore changes done to the current
                  loaded spreadsheet.
 
      :x          Save the current spreadsheet and quit SC-IM.
+     :wq
 
      :x {file}   Save the current spreadsheet to {file} and quit SC-IM.
 
@@ -342,6 +362,8 @@ Commands for handling cell content:
                  The name of the created file comes from the current
                  spreadsheet, with ".tab" appended.
                  If a range is selected, only that range is exported.
+                 NOTE: If you do an export with the :e command, current file name stays unchaged.
+                 See :file command for more details.
 
      :e txt      Export current spreadsheet to plain text.
                  If a range is selected, only that range is exported.
@@ -366,24 +388,47 @@ Commands for handling cell content:
      :e! txt {file}
                  Like ":e txt", but overwrite {file} if it exists.
 
-     :i csv {file}
-                 Import comma-separated file {file} to SC-IM's buffer.
-
-     :i tab {file}
-                 Import tab-separated file {file} to SC-IM's buffer.
-
-     :i xls {file}
-                 Import xls file {file} to SC-IM's buffer.
-
-     :i xlsx {file}
-                 Import xlsx file {file} to SC-IM's buffer.
-                 If 'xlsx_readformulas' is set, SC-IM tries to import
+     :e xlsx {file}
+                 Export the current spreadsheet to xlsx file {file}.
+                 If 'xlsx_readformulas' is set, SC-IM tries to export
                  formulas, rather than the final values of a cell.
 
-     :i! xlsx {file}
-                 Like ":i xlsx", but overwrite changes since last save.
+     :e! xlsx {file}
+                 Like ":e xlsx", but overwrite {file} if it exists.
+
+     :ccopy      Copy a selected range to clipboard.
+                 When 'ccopy' command is executed, the default value of macro
+                 DEFAULT_COPY_TO_CLIPBOARD_CMD (set in Makefile during build)
+                 is executed.
+                 That value contains a system command that is executed to copy
+                 to an specific clipboard. See in Makefile the different
+                 options available.
+                 You can also set a different value of 'default_copy_to_clipboard_cmd'
+                 configuration variable at runtime, using the :set command.
+                 This process will export content as plain text.
+                 It will not delimit columns with '\t' chars.
+                 If you wish to delimit columns with tabs, to paste content
+                 directly to other spreadsheet programs, rather than an
+                 editor, set "copy_to_clipboard_delimited_tab" variable to "1".
+
+     :cpaste     Paste clipboard content to Sc-im.
+                 When 'cpaste' command is executed, the default value of macro
+                 DEFAULT_PASTE_FROM_CLIPBOARD_CMD (set in Makefile during build)
+                 is executed.
+                 That value contains a system command that is executed to
+                 paste content of a specific clipboard to Sc-im.
+                 See in Makefile the different options available.
+                 You can also set a different value of 'default_paste_from_clipboard_cmd'
+                 configuration variable at runtime, using the :set command.
+                 This process will treat '\t' chars as column delimiter, and '\n' chars
+                 as rows delimiters.
 
      :version    Show SC-IM version number.
+
+                 If you start Sc-im with ./scim --version
+                 version number of Sc-im will be printed on screen, including
+                 the different features that were enabled when Sc-im was compiled.
+                 Afterwards Sc-im will exit.
 
      :refresh    Refresh the UI. Acts like the <C-l> command of NORMAL_MODE.
 
@@ -393,6 +438,8 @@ Commands for handling cell content:
                  Set a configuration option to {value}. The arguments may be
                  repeated.
                  Example:    :set half_page_scroll=0 numeric_zero=1
+                             :set numeric          (same as :set numeric=1)
+                             :set nonumeric        (same as :set numeric=0)
 
      :showmaps   Show all key mappings.
 
@@ -421,6 +468,16 @@ Commands for handling cell content:
      :iunmap {lhs}
                  Remove the map sequence {lhs} that takes effect in
                  INSERT_MODE.
+
+     :file [{file}]
+                 If {file} is given, expand {file}, and set the current file
+                 name to the result of the expansion.
+
+                 If {file} is not given, display the current file name on
+                 the status line.
+                 Take note that current file name is set during loading of
+                 Sc-im or with this command. If you do an export with the :e
+                 command, current file name stays unchaged.
 
      :fill {range} {initial_number} {increment_number}
                  Fill range {range} with values. The first cell of the range
@@ -527,6 +584,15 @@ Commands for handling cell content:
                 Like ":sort {range}", but the sort is performed on the
                 selected range.
 
+    :subtotal {col_range} {operation} {col_operation}
+                Apply subtotals over the data in a selected range.
+                {col_range} is the column to group by.
+                {operation} can be one of the followings:
+                    @sum, @prod, @avg, @count, @stddev, @max, @min
+                {col_operation} is the column whose values will be used
+                to do the {operation}.
+                Example: load the file example examples/sc/subtotals.sc,
+                select the A1:C9 range, and type    :subtotal A @sum C
 
     :addfilter "{filter_string}"
     :showfilters
@@ -599,38 +665,68 @@ Commands for handling cell content:
     :hiddencols
                 Show details of hidden columns.
 
+    :freeze {column}
+    :freeze {column:column}
+                Freeze the column or column range given. (Case insensitive).
+                (the rest of the screen scrolls but the column/s stays fixed on the screen).
+                NOTE: there can be only just one frozen range defined.
+
+    :freeze {row}
+    :freeze {row:row}
+                Freeze the row or row range given.
+                (the rest of the screen scrolls but the row/s stays fixed on the screen).
+
+    :freeze {range}
+                Freeze a range given.  (Case insensitive).
+                (the rest of the screen scrolls but the range stays fixed on the screen).
+
+    :unfreeze
+                Remove a previous frozen row / col or range.
+
     :pad {spaces}
                 Apply a left padding {spaces} characters in width to a column.
                 If a range selected, pad the columns inside that range.
 
-    :color {key}={arg} ..
+    :color "{key}={arg} .."
                 Change a color definition.
 
                 {key} is one of the following:
                 type, fg, bg, bold, dim, reverse, standout, underline, blink
                 Note: The type, fg, and bg keys are mandatory.
 
-                The value of type is one of the following:
+                The value of type shall be one of the following:
                      HEADINGS, MODE, NUMB, STRG, DATEF, EXPRESSION,
                      CELL_ERROR, CELL_NEGATIVE, CELL_SELECTION,
                      CELL_SELECTION_SC, INFO_MSG, ERROR_MSG, CELL_ID,
                      CELL_FORMAT, CELL_CONTENT, WELCOME, NORMAL, INPUT.
 
-                The value of fg and bg is one of the following:
-                     WHITE, BLACK, RED, GREEN, YELLOW, BLUE, MAGENTA, CYAN.
+                The value of fg and bg shall be one of the following:
+                     WHITE, BLACK, RED, GREEN, YELLOW, BLUE, MAGENTA, CYAN or DEFAULT_COLOR.
+                     DEFAULT_COLOR just takes the default color of your
+                     terminal. If you set it as fg color it will take default
+                     color of your foreground. If you set it as bg color it
+                     will take the default background color of your terminal.
 
                 The value of other parameters are booleans, 1 or 0.
 
-                Example:  :color type=HEADINGS bold=0 fg=BLACK bg=YELLOW
+                Example:  :color "type=HEADINGS bold=0 fg=BLACK bg=YELLOW"
 
                 Colors can be set at runtime or specified in:
                      a. the .scimrc file stored in $HOME
                      b. the current .sc file.
 
-    :cellcolor {key}={arg} ..
+                color "type=HEADINGS fg=WHITE bg=CYAN"
+
+    :cellcolor "{key}={arg} .."
                 Change the color of the current cell or range.
-                Example:   :cellcolor bg=CYAN fg=WHITE
-                           :cellcolor fg=RED bold=1 underline=1
+                Example:   :cellcolor "bg=CYAN fg=WHITE"
+                           :cellcolor "fg=RED bold=1 underline=1"
+                           :cellcolor A2:A6 "fg=CYAN bold=1 underline=1"
+
+    :unformat
+    :unformat {range}
+                Removes a previous format set over a range.
+                If not range is specified, it removes the format over current cell.
 
     :redefine_color "{color}" {R} {G} {B}
                 Change the RGB values of the colors defined by ncurses.
@@ -647,7 +743,7 @@ Commands for handling cell content:
                 add it to $HOME/.scimrc:
                             REDEFINE_COLOR "RED" 700 100 100
 
-                Redefining the BLACK color is one way to change the default
+                Redefining the BLACK color itself is another way to change the default
                 background color of SC-IM.
 
     :lock       Lock the current cell or range.  Locked cells are immune to
@@ -668,6 +764,37 @@ Commands for handling cell content:
 
     :autojus    Auto-resize the columns covered by the selected cell or range.
 
+    :trigger    Trigger action on cell or range. Trigger can be Read or Write
+                or Both. On Read, trigger is executed before evaluating cells
+                value, on Write, after the evaluation. Type of Trigger can be
+                Lua or C. In Lua there are scim specific function available
+                accessing cells, more in "examples/lua* directory.
+
+                Example:
+                :trigger a5 "mode=R type=LUA file=trg.lua function=trg"
+
+                Triggers when ever cell a5 is read and calls function
+                trg() in file trg.lua. In Lua column, row and mode is
+                passed as parameter to the function. Mode is whether
+                it was a READ or WRITE trigger.
+
+                :trigger b10 "mode=W type=C file=trg.so function=wr2mysql"
+
+                Function "wr2mysql" in trg.so is called when to
+                cell b10 is writen a new value.
+                See "examples/Module/module.c" for more Infos.
+                Adding "-Wl,--export-dynamic" in Makefile for linking
+                sc-im, will export all symbols from sc-im, making it
+                available for dynamic linking with modules.
+
+                The search path for LUA trigger files is
+                $HOME/.scim/lua/ or /usr/local/share/scim/lua
+                (in that order) and for C Trigger
+                $HOME/.scim/module or /usr/local/share/scim/module
+
+
+    :untrigger  Delete Trigger action on cell. Use with care.
+
     :fsum       Sum the numeric values of a range.
 
                 The range is defined by the immediate cell above the current
@@ -684,7 +811,28 @@ Commands for handling cell content:
                 If a range is selected, the formula in the top left cell will
                 be copied down to the end of the range.
 
-     c-r{a-zA-Z}
+    :plot {type}
+                Plot a graphic using a selected range.
+                Right now, only 'line', 'scatter', 'bar' and 'pie' types are allowed.
+
+                Ex. of use:     :plot line
+                This command calls gnuplot using the file called 'plotline'
+                that is first looked in $HOME/.scim/, and if not found in
+                /usr/local/share/scim/ (or HELPDIR path of Makefile).
+                This 'plotline' can be customized by user. (See :plotedit
+                command below). You can set terminal and other gnuplot
+                parameters. Default terminal is 'dumb', although 'caca'
+                terminal is recommended for colors and wide chars support.
+
+    :plotedit {type}
+                Edit a plot file that will be used for plotting.
+                Can contain any gnuplot command.
+                Right now, only 'line' type, 'scatter' type, 'bar' type and
+                'pie' type files can be edited.
+
+                Ex. of use:     :plotedit scatter
+
+    c-r{a-zA-Z}
                 If the character is a mark of a cell or range, the range
                 represented is inserted into the command line.
 
@@ -692,6 +840,8 @@ Commands for handling cell content:
 
     c-p
     <UP>        Go back in command line history.
+                NOTE: if inputline is not empty, up and down keys recall older commands from history,
+                but taking whose commands that beginning matches the current inputline content.
 
     c-n
     <DOWN>      Go forward in command line history.
@@ -832,12 +982,12 @@ Commands for handling cell content:
     Set it to '1' to make an initial digit start a numeric value.
     Set it to '0', to make a digit act as a command multiplier.
 
-    'numeric_zero'
-    'numeric_decimal'
+    'numeric_zero' [default off]
+    'numeric_decimal' [default off]
     When these are set, the zero digit or decimal point will correspondingly
     initiate numeric entry, but only when 'numeric' is also set.
 
-    'newline_action'
+    'newline_action' [default 0]
     Set it to 'j' to move the cursor down after an entry.
     Set it to 'l' to move right, or set it to '0' to take no action.
 
@@ -849,16 +999,47 @@ Commands for handling cell content:
     If cell content exceedes column width it gets cut off to fit the column
     width.  If overlap is set, the content overflows into the next column.
 
+    'debug' [default off]
+    set this to see debug messages in screen
+
+    'half_page_scroll' [default off]
+    set this to scroll by half a page instead of full page.
+
+    'xlsx_readformulas' [default off]
+    If 'xlsx_readformulas' is set, SC-IM tries to import formulas, rather than
+    the final values of a cell.
+
+    'tm_gmtoff' [default -10800 seconds]
+    set gmtoffset used for converting datetimes to localtime.
+
+    'ignorecase' [default off]
+    set this to ignore case in searches done with '/' command.
+
+    'autobackup' [default 0 (no autobackup)]
+    set this to a number in seconds 'n', to backup current file every 'n' seconds.
+    AUTOBACKUP must be set during Sc-im build for this feature to be
+    available.
+    If you set this to 0 but AUTOBACKUP was set during build, it still will
+    check for existance of backups before loading a file.
+
 ==============================================================================
 &Built-in Range Functions&
 
     The following functions return the result of performing an operation on
-    all valid (nonblank) entries in the given {range}. The optional expression
-    {expr} restricts which cells in {range} to operate on. (See above.)
+    all valid (nonblank) entries in the given {range}. The optional second
+    argument {expr} is an expression that is to be evaluated for each cell
+    in the specified range to determine which cells to include in the function.
+    Only those cells for which the expression evaluates to true (non-zero)
+    will be used in calculating the value of the function.
+
 
     @sum({range})
     @sum({range},{expr})
         Sum up the values.
+        examples with optional {expr} argument:
+            @sum(D1:D20,D1>25)
+            @sum(D1:D20,E1>25)
+            @sum(D1:D20,@eqs(C1,"s"))
 
     @prod({range})
     @prod({range},{expr})
@@ -936,7 +1117,7 @@ Commands for handling cell content:
         Return {expr1} raised to the power of {expr2}.
 
     @hypot({expr1},{expr2})
-        Return @sqrt({expr1}*{expr1}+{expr1}*{expr1}), taking precautions
+        Return @sqrt({expr1}*{expr1}+{expr2}*{expr2}), taking precautions
         against overflows.
 
     @pi
@@ -991,6 +1172,8 @@ Commands for handling cell content:
     @slen("{se}")
         Returns the length of string expression {se}.
 
+
+
 ==============================================================================
 &String Expressions&
 
@@ -1043,7 +1226,7 @@ Commands for handling cell content:
         For example, having in A1 the string "Extension" and entering in A2
         the following:
         @replace(A1,"n","Z")
-        will result "Extezsioz" in A2.
+        will result "ExteZsioZ" in A2.
 
     @ext("{se}",{expr})
         Call an external program or script.  This allows arbitrary functions
@@ -1095,6 +1278,14 @@ Commands for handling cell content:
         string (base-256 number without digit 0).
         See also @ascii.
 
+    @lua("luascript",0)
+        Executes a "luascript". Using Lua script scim can be extend with lot
+        new functionality, such as complex programming, accessing databases etc.
+        The search patch for LUA scripts files is
+        $HOME/.scim/lua/ or /usr/local/share/scim/lua (in that order)
+        Always use it only with @ston see example:
+        @ston(@lua("luascript",0))
+
 ==============================================================================
 &Built-in Date and Time Functions&
 
@@ -1122,6 +1313,45 @@ Commands for handling cell content:
     @second({date_expr})
         Return the number of seconds since the last full minute, encoded as 0
         to 59.
+
+==============================================================================
+&Other functions&
+    @if({expr}, {expr}, {expr})
+        Conditional:   If the  first  expression  is  true  then  the  value  of
+        the  second  is  returned,  otherwise the  value  of  the  third.
+        example of use: @if(@eqs(A1,"a"),B1,0)
+
+==============================================================================
+&LUA Scripts and Triggers&
+     SC-IM was extended with LUA capabilities and also provided with helper
+     Function for manipulate SC-IM data with Lua at runtime. Since it is a
+     fully functional Lua, you can use all Lua packages also for sc-im lua
+     scripts. Use luarocks to install additional packages.
+
+     Function provided to lua script/triggers :
+
+     sc.lgetnum (c, r)       - get numeric value of cell c,r (c/r is number column/row)
+                               returns value
+     sc.lsetnum (c, r, val)  - set numeric value to a cell c,t
+     sc.lsetform (c, r, str) - set formula to a cell. Basically it does "let cell= str"
+     sc.setstr(c, r, str)    - set string to a cell
+     sc.query(str)           - query input from user, but first prints str. Use with care!!
+                               Dont use this function within triggers!!
+                               returns string
+     sc.sc(str)              - send str to sc-im parser
+     sc.a2colrow(str)        - convert ascii cell representation to numeric column/row
+                               returns column, row example:
+                               c,r=sc.a2colrow("c5")
+     sc.colrow2a(c,r)        - returns ascii representation of numeric column/row
+     sc.maxcols()            - return current maximum columns
+     sc.maxrows()            - return current maximum rows
+     sc.curcol()             - return current column
+     sc.currow()             - return current row
+
+     The search patch for LUA scripts files is
+     $HOME/.scim/lua/ or /usr/local/share/scim/lua (in that order)
+     Example can be found in sc-im/examples/lua in source code tree.
+
 
 ==============================================================================
 &Supported file formats / File import&

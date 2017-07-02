@@ -1,9 +1,9 @@
 #include <stdlib.h>
+
 #include "sc.h"
 #include "macros.h"
-#include "screen.h"
+#include "tui.h"
 #include "hide_show.h"
-#include "color.h"   // for set_ucolor
 #include "conf.h"
 #include "vmtbl.h"   // for growtbl
 
@@ -135,11 +135,11 @@ void show_hiddenrows() {
     }
     char valores[12 * c + 20];
     valores[0]='\0';
-    strcpy(valores, "Hidden rows:\n");
+    strcpy(valores, "Hidden rows:\n"); // 20
     for (r = 0; r < maxrow; r++) {
-       if (row_hidden[r]) sprintf(valores + strlen(valores), "- %d\n", r);
+       if (row_hidden[r]) sprintf(valores + strlen(valores), "- %d\n", r); // 12
     }
-    show_text(valores);
+    ui_show_text(valores);
 
     return;
 }
@@ -151,11 +151,11 @@ void show_hiddencols() {
     }
     char valores[8 * c + 20];
     valores[0]='\0';
-    strcpy(valores, "Hidden cols:\n");
+    strcpy(valores, "Hidden cols:\n"); // 20
     for (c = 0; c < maxcol; c++) {
-       if (col_hidden[c]) sprintf(valores + strlen(valores), "- %s\n", coltoa(c));
+       if (col_hidden[c]) sprintf(valores + strlen(valores), "- %s\n", coltoa(c)); // 8
     }
-    show_text(valores);
+    ui_show_text(valores);
 
     return;
 }

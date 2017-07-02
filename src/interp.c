@@ -1,42 +1,45 @@
-/*    Expression interpreter and assorted support routines
- *    Based on SC
- *        original by James Gosling, September 1982
- *        modified by Mark Weiser and Bruce Israel, University of Maryland
+/*
+ * Expression interpreter and assorted support routines
+ * Based on SC
+ * original by James Gosling, September 1982
+ * modified by Mark Weiser and Bruce Israel, University of Maryland
  *
- *        More mods Robert Bond, 12/86
- *        More mods by Alan Silverstein, 3-4/88, see list of changes.
+ * More mods Robert Bond, 12/86
+ * More mods by Alan Silverstein, 3-4/88, see list of changes.
  */
 
 #include <sys/types.h>
-
-#ifdef IEEE_MATH
-#include <ieeefp.h>
-#endif
-
 #include <math.h>
 #include <signal.h>
 #include <setjmp.h>
 #include <ctype.h>
 #include <errno.h>
-
 #include <time.h>
 #include <string.h>
-
 #include <stdlib.h>
-#include <ncurses.h>
+#include <unistd.h>
+#include <regex.h>
+
+#ifdef IEEE_MATH
+#include <ieeefp.h>
+#endif
+
 #include "sc.h"
 #include "macros.h"
-#include "color.h"
 #include "cmds.h"
 #include "format.h"
 #include "conf.h"
+#include "tui.h"
 #include "range.h"
 #include "xmalloc.h" // for scxfree
 #include "lex.h"     // for atocol
 #include "interp.h"
 #include "utils/string.h"
-#include <unistd.h>
-#include <regex.h>
+#include "trigger.h"
+
+#ifdef XLUA
+#include "lua.h"
+#endif
 
 #ifdef UNDO
 #include "undo.h"
@@ -67,7 +70,6 @@ jmp_buf fpe_save;
 extern bool decimal;      /* Set if there was a decimal point in the number */
 
 /* a linked list of free [struct enodes]'s, uses .e.o.left as the pointer */
-//struct enode * freeenodes = NULL;
 
 double dolookup      (struct enode * val, int minr, int minc, int maxr, int maxc, int offr, int offc);
 double fn1_eval      (double (* fn)(), double arg);
@@ -94,13 +96,8 @@ int    cellerror = CELLOK;    /* is there an error in this cell */
 
 extern int find_range(char * name, int len, struct ent * lmatch, struct ent * rmatch, struct range ** rng);
 
-
 #include "dep_graph.h"
 extern graphADT graph;
-//extern char valores;
-
-
-
 
 double finfunc(int fun, double v1, double v2, double v3) {
     double answer,p;
@@ -632,9 +629,9 @@ double donval(char * colstr, double rowdoub) {
 }
 
 /*
- *    The list routines (e.g. dolmax) are called with an LMAX enode.
- *    The left pointer is a chain of ELIST nodes, the right pointer
- *    is a value.
+ * The list routines (e.g. dolmax) are called with an LMAX enode.
+ * The left pointer is a chain of ELIST nodes, the right pointer
+ * is a value.
  */
 double dolmax(struct enode * ep) {
     register int count = 0;
@@ -645,8 +642,10 @@ double dolmax(struct enode * ep) {
     cellerror = CELLOK;
     for (p = ep; p; p = p->e.o.left) {
         v = eval(NULL, p->e.o.right);
-        if ( !count || v > maxval) maxval = v;
-        count++;
+        if ( !count || v > maxval) {
+            maxval = v;
+            count++;
+        }
     }
     if (count) return maxval;
     else return (double)0;
@@ -661,8 +660,10 @@ double dolmin(struct enode * ep) {
     cellerror = CELLOK;
     for (p = ep; p; p = p->e.o.left) {
         v = eval(NULL, p->e.o.right);
-        if ( !count || v < minval) minval = v;
-        count++;
+        if ( !count || v < minval) {
+            minval = v;
+            count++;
+        }
     }
     if (count) return minval;
     else return (double)0;
@@ -914,7 +915,7 @@ double eval(register struct ent * ent, register struct enode * e) {
             double temp = eval(ent, e->e.o.left);
             return (temp - floor(temp) < 0.5 ? floor(temp) : ceil(temp));
         }
-     case ROUND:
+    case ROUND:
         {
         int precision = (int) eval(ent, e->e.o.right);
         double scale = 1;
@@ -968,9 +969,11 @@ double eval(register struct ent * ent, register struct enode * e) {
     case LASTCOL: return ((double) maxcol);
     case ERR_:
                  cellerror = CELLERROR;
+                 if (ent && getVertex(graph, ent, 0) == NULL) GraphAddVertex(graph, ent);
                  return ((double) 0);
     case REF_:
                  cellerror = CELLREF;
+                 if (ent && getVertex(graph, ent, 0) == NULL) GraphAddVertex(graph, ent);
                  return ((double) 0);
     case PI_:    return ((double) M_PI);
     case BLACK:  return ((double) COLOR_BLACK);
@@ -1021,7 +1024,7 @@ double fn2_eval(double (*fn)(), double arg1, double arg2) {
     return res;
 }
 
-/* 
+/*
  * Rules for string functions:
  * Take string arguments which they scxfree.
  * All returned strings are assumed to be xalloced.
@@ -1103,7 +1106,6 @@ char * dofmt(char * fmtstr, double v) {
  * allocated string in all cases, even if null, insures cell expressions are
  * written to files, etc.
  */
-
 char * doext(struct enode *se) {
     char buff[FBUFLEN];        /* command line/return, not permanently alloc */
     char * command;
@@ -1166,7 +1168,6 @@ char * doext(struct enode *se) {
  * still allocate and return a null string so the cell has a label value so
  * the expression is saved in a file, etc.
  */
-
 char * dosval(char * colstr, double rowdoub) {
     struct ent * ep;
     char * llabel;
@@ -1345,6 +1346,9 @@ char * seval(register struct ent * ent, register struct enode * se) {
         return dostindex(minr, minc, maxr, maxc, se->e.o.right);
     }
     case EXT:    return (doext(se));
+#ifdef XLUA
+    case LUA:    return (doLUA(se));
+#endif
     case SVAL:   return (dosval(seval(ent, se->e.o.left), eval(NULL, se->e.o.right)));
     case REPLACE: return (doreplace(seval(ent, se->e.o.left),
                           seval(NULL, se->e.o.right->e.o.left),
@@ -1495,14 +1499,13 @@ void go_last() {
     }
 }
 
-/* Place the cursor on a given cell.  If cornerrow >= 0, place the cell
+/*
+ * Place the cursor on a given cell.  If cornerrow >= 0, place the cell
  * at row cornerrow and column cornercol in the upper left corner of the
  * screen if possible.
  */
 void moveto(int row, int col, int lastrow_, int lastcol_, int cornerrow, int cornercol) {
     register int i;
-
-    //if ( !loading && row != -1 && (row != currow || col != curcol )) remember(0);
 
     lastrow = currow;
     lastcol = curcol;
@@ -1514,11 +1517,7 @@ void moveto(int row, int col, int lastrow_, int lastcol_, int cornerrow, int cor
     gs.g_col = curcol;
     gs.g_lastrow = lastrow_;
     gs.g_lastcol = lastcol_;
-    //gs.strow = cornerrow;
-    //gs.stcol = cornercol;
     if (cornerrow >= 0) {
-        //strow = cornerrow;
-        //stcol = cornercol;
         gs.stflag = 1;
     } else
         gs.stflag = 0;
@@ -1538,10 +1537,7 @@ void moveto(int row, int col, int lastrow_, int lastcol_, int cornerrow, int cor
         }
         colsinrange += fwidth[i];
     }
-    if (loading) {
-        //update(1);
-        changed = 0;
-    } //else remember(1);
+    //if (loading) changed = 0;
 }
 
 /*
@@ -1559,11 +1555,13 @@ void num_search(double n, int firstrow, int firstcol, int lastrow_, int lastcol_
     gs.g_type = G_NUM;
     gs.g_n = n;
     gs.g_row = firstrow;
+
+
+
     gs.g_col = firstcol;
     gs.g_lastrow = lastrow_;
     gs.g_lastcol = lastcol_;
     gs.errsearch = errsearch;
-
     if (currow >= firstrow && currow <= lastrow_ && curcol >= firstcol && curcol <= lastcol_) {
         endr = currow;
         endc = curcol;
@@ -1573,8 +1571,8 @@ void num_search(double n, int firstrow, int firstcol, int lastrow_, int lastcol_
     }
     r = endr;
     c = endc;
-    while (1) {
 
+    while (1) {
         if (flow) { // search forward
             if (c < lastcol_)
                 c++;
@@ -1620,13 +1618,14 @@ void num_search(double n, int firstrow, int firstcol, int lastrow_, int lastcol_
     curcol = c;
     rowsinrange = 1;
     colsinrange = fwidth[curcol];
-    if (loading) {
+    //if (loading) {
         //update(1);
-        changed = 0;
-    } //else remember(1);
+    //    changed = 0;
+    //} //else remember(1);
 }
 
-/* 'goto' a cell containing a matching string
+/*
+ * 'goto' a cell containing a matching string
  * flow = 1, look forward
  * flow = 0, look backwards
  */
@@ -1638,9 +1637,12 @@ void str_search(char *s, int firstrow, int firstcol, int lastrow_, int lastcol_,
     regex_t preg;
     int errcode;
 
-    //if (!loading) remember(0);
+    if ( atoi(get_conf_value("ignorecase")))
+        errcode = regcomp(&preg, s, REG_EXTENDED | REG_ICASE);
+    else
+        errcode = regcomp(&preg, s, REG_EXTENDED);
 
-    if ((errcode = regcomp(&preg, s, REG_EXTENDED))) {
+    if (errcode) {
         scxfree(s);
         tmp = scxmalloc((size_t)160);
         regerror(errcode, &preg, tmp, sizeof(tmp));
@@ -1656,8 +1658,8 @@ void str_search(char *s, int firstrow, int firstcol, int lastrow_, int lastcol_,
     gs.g_col = firstcol;
     gs.g_lastrow = lastrow_;
     gs.g_lastcol = lastcol_;
-    if (currow >= firstrow && currow <= lastrow_ &&
-        curcol >= firstcol && curcol <= lastcol_) {
+
+    if (currow >= firstrow && currow <= lastrow_ && curcol >= firstcol && curcol <= lastcol_) {
         endr = currow;
         endc = curcol;
     } else {
@@ -1668,7 +1670,6 @@ void str_search(char *s, int firstrow, int firstcol, int lastrow_, int lastcol_,
     c = endc;
 
     while (1) {
-
         if (flow) { // search forward
             if (c < lastcol_)
                 c++;
@@ -1677,8 +1678,9 @@ void str_search(char *s, int firstrow, int firstcol, int lastrow_, int lastcol_,
                     while (++r < lastrow_ && row_hidden[r]) /* */;
                     c = firstcol;
                 } else {
-                    r = firstrow;
-                    c = firstcol;
+                    r = endr;
+                    c = endc;
+                    break;
                 }
             }
         } else { // search backwards
@@ -1689,8 +1691,9 @@ void str_search(char *s, int firstrow, int firstcol, int lastrow_, int lastcol_,
                     while (--r > firstrow && row_hidden[r]) /* */;
                     c = lastcol_;
                 } else {
-                    r = lastrow_;
-                    c = lastcol_;
+                    r = endr;
+                    c = endc;
+                    break;
                 }
             }
         }
@@ -1724,10 +1727,8 @@ void str_search(char *s, int firstrow, int firstcol, int lastrow_, int lastcol_,
             }
         }
         if (! col_hidden[c]) {
-            if (gs.g_type == G_STR && p && p->label &&
-                    regexec(&preg, p->label, 0, NULL, 0) == 0) {
+            if (gs.g_type == G_STR && p && p->label && regexec(&preg, p->label, 0, NULL, 0) == 0)
                 break;
-            }
         } else            /* gs.g_type != G_STR */
         if (*line != '\0' && (regexec(&preg, line, 0, NULL, 0) == 0))
             break;
@@ -1746,10 +1747,9 @@ void str_search(char *s, int firstrow, int firstcol, int lastrow_, int lastcol_,
     rowsinrange = 1;
     colsinrange = fwidth[curcol];
     regfree(&preg);
-    if (loading) {
-        //update(1);
-        changed = 0;
-    } //else remember(1);
+    //if (loading) {
+    //    changed = 0;
+    //}
 }
 
 /* fill a range with constants */
@@ -1811,8 +1811,6 @@ void fill(struct ent *v1, struct ent *v2, double start, double inc) {
     else {
         sc_error(" Internal error calc_order");
     }
-    changed++;
-
     #ifdef UNDO
     end_undo_action();
     #endif
@@ -1893,14 +1891,28 @@ void unlock_cells(struct ent * v1, struct ent * v2) {
 /* set the numeric part of a cell */
 void let(struct ent * v, struct enode * e) {
 
+    if (locked_cell(v->row, v->col)) return;
+
+    #ifdef UNDO
+    int i;
+    extern struct ent_ptr * deps;
+    if (!loading) {
+        create_undo_action();
+        copy_to_undostruct(v->row, v->col, v->row, v->col, 'd');
+
+        // here we save in undostruct, all the ents that depends on the deleted one (before change)
+        ents_that_depends_on_range(v->row, v->col, v->row, v->col);
+        if (deps != NULL) {
+            for (i = 0; i < deps->vf; i++)
+                copy_to_undostruct(deps[i].vp->row, deps[i].vp->col, deps[i].vp->row, deps[i].vp->col, 'd');
+        }
+    }
+    #endif
+    if (getVertex(graph, lookat(v->row, v->col), 0) != NULL) destroy_vertex(lookat(v->row, v->col));
+
+
     double val;
     unsigned isconstant = constant(e);
-
-    if (locked_cell(v->row, v->col))
-        return;
-
-    //if (getVertex(graph, v, 0) != NULL) destroy_vertex(v);
-
     if (v->row == currow && v->col == curcol)
         cellassign = 1;
     if (loading && ! isconstant)
@@ -1918,13 +1930,15 @@ void let(struct ent * v, struct enode * e) {
         }
         if (v->cellerror != cellerror) {
             v->flags |= is_changed;
-            changed++;
             modflg++;
             v->cellerror = cellerror;
         }
         (void) signal(SIGFPE, exit_app);
         if (exprerr) {
             efree(e);
+            #ifdef UNDO
+            if (!loading) dismiss_undo_item(NULL);
+            #endif
             return;
         }
     }
@@ -1942,28 +1956,62 @@ void let(struct ent * v, struct enode * e) {
             v->expr = (struct enode *) 0;
         }
         efree(e);
-    } else {
+    } else if (! exprerr) {
         efree(v->expr);
 
         v->expr = e;
         v->flags &= ~is_strexpr;
         eval(v, e); // ADDED - here we store the cell dependences in a graph
     }
-
     if (v->cellerror == CELLOK) v->flags |= ( is_changed | is_valid );
-    changed++;
     modflg++;
+    if (( v->trigger  ) && ((v->trigger->flag & TRG_WRITE) == TRG_WRITE))
+        do_trigger(v,TRG_WRITE);
+
+
+    #ifdef UNDO
+    if (!loading) {
+        copy_to_undostruct(v->row, v->col, v->row, v->col, 'a');
+        // here we save in undostruct, all the ents that depends on the deleted one (after change)
+        if (deps != NULL) free(deps);
+        ents_that_depends_on_range(v->row, v->col, v->row, v->col);
+        if (deps != NULL) {
+            for (i = 0; i < deps->vf; i++)
+                copy_to_undostruct(deps[i].vp->row, deps[i].vp->col, deps[i].vp->row, deps[i].vp->col, 'a');
+            free(deps);
+            deps = NULL;
+        }
+        end_undo_action();
+    }
+    #endif
+
+    return;
 }
 
 void slet(struct ent * v, struct enode * se, int flushdir) {
-    char * p;
+    if (locked_cell(v->row, v->col)) return;
 
-    if (locked_cell(v->row, v->col))
-        return;
-    //if (getVertex(graph, v, 0) != NULL) destroy_vertex(v);
-    if (v->row == currow && v->col == curcol)
-        cellassign = 1;
+    #ifdef UNDO
+    extern struct ent_ptr * deps;
+    int i;
+    if (!loading) {
+    create_undo_action();
+    copy_to_undostruct(v->row, v->col, v->row, v->col, 'd');
+
+    // here we save in undostruct, all the ents that depends on the deleted one (before change)
+    ents_that_depends_on_range(v->row, v->col, v->row, v->col);
+    for (i = 0; deps != NULL && i < deps->vf; i++)
+        copy_to_undostruct(deps[i].vp->row, deps[i].vp->col, deps[i].vp->row, deps[i].vp->col, 'd');
+    }
+    #endif
+    if (getVertex(graph, lookat(v->row, v->col), 0) != NULL) destroy_vertex(lookat(v->row, v->col));
+
+
+    char * p;
+    if (v->row == currow && v->col == curcol) cellassign = 1;
     exprerr = 0;
+    short already_eval = FALSE;
+
     (void) signal(SIGFPE, eval_fpe);
     if (setjmp(fpe_save)) {
         sc_error ("Floating point exception in cell %s", v_name(v->row, v->col));
@@ -1972,20 +2020,16 @@ void slet(struct ent * v, struct enode * se, int flushdir) {
     } else {
         cellerror = CELLOK;
         p = seval(NULL, se);
-        //p = seval(v, se);
     }
     if (v->cellerror != cellerror) {
         v->flags |= is_changed;
-        changed++;
         modflg++;
         v->cellerror = cellerror;
     }
     (void) signal(SIGFPE, exit_app);
     if (exprerr) {
         efree(se);
-        return;
-    }
-    if (constant(se)) {
+    } else if (constant(se)) {
         label(v, p, flushdir);
         if (p) scxfree(p);
         efree(se);
@@ -1994,26 +2038,43 @@ void slet(struct ent * v, struct enode * se, int flushdir) {
             v->expr = (struct enode *) 0;
             v->flags &= ~is_strexpr;
         }
-        return;
+    } else if ( ! already_eval ) {
+        if (p) free(p);                   // ADDED for 2267 leak!
+
+        efree(v->expr);
+        v->expr = se;
+
+        p = seval(v, se);                 // ADDED - here we store the cell dependences in a graph
+        if (p) scxfree(p);                // ADDED
+
+        v->flags |= (is_changed | is_strexpr);
+        if (flushdir < 0) v->flags |= is_leftflush;
+
+        if (flushdir == 0)
+            v->flags |= is_label;
+        else
+            v->flags &= ~is_label;
     }
-    if (p) free(p);                   // ADDED for 2267 leak!
-
-    efree(v->expr);
-    v->expr = se;
-
-    p = seval(v, se);                 // ADDED - here we store the cell dependences in a graph
-    if (p) scxfree(p);                // ADDED
-
-    v->flags |= (is_changed|is_strexpr);
-    if (flushdir < 0) v->flags |= is_leftflush;
-
-    if (flushdir == 0)
-        v->flags |= is_label;
-    else
-        v->flags &= ~is_label;
-
-    changed++;
     modflg++;
+    if (( v->trigger  ) && ((v->trigger->flag & TRG_WRITE) == TRG_WRITE)) do_trigger(v,TRG_WRITE);
+
+    #ifdef UNDO
+    if (!loading) {
+    copy_to_undostruct(v->row, v->col, v->row, v->col, 'a');
+    // here we save in undostruct, all the ents that depends on the deleted one (after change)
+    if (deps != NULL) free(deps);
+    ents_that_depends_on_range(v->row, v->col, v->row, v->col);
+    if (deps != NULL) {
+        for (i = 0; i < deps->vf; i++)
+            copy_to_undostruct(deps[i].vp->row, deps[i].vp->col, deps[i].vp->row, deps[i].vp->col, 'a');
+        free(deps);
+        deps = NULL;
+    }
+    end_undo_action();
+    }
+    #endif
+
+    return;
 }
 
 void format_cell(struct ent *v1, struct ent *v2, char *s) {
@@ -2061,6 +2122,9 @@ int constant(register struct enode *e) {
          && constant(e->e.o.left)
          && constant(e->e.o.right)
          && e->op != EXT     /* functions look like constants but aren't */
+#ifdef XLUA
+         && e->op != LUA
+#endif
          && e->op != NVAL
          && e->op != SVAL
          && e->op != NOW
@@ -2092,14 +2156,14 @@ void efree(struct enode * e) {
 
 void label(register struct ent * v, register char * s, int flushdir) {
     if (v) {
-        if (flushdir == 0 && v->flags & is_valid) {
+        /*if (flushdir == 0 && v->flags & is_valid) {
             register struct ent * tv;
             if (v->col > 0 && ((tv=lookat(v->row, v->col-1))->flags & is_valid) == 0)
             v = tv, flushdir = 1;
             else if (((tv=lookat(v->row, v->col+1))->flags & is_valid) == 0)
             v = tv, flushdir = -1;
             else flushdir = -1;
-        }
+        }*/
         if (v->label)
             scxfree((char *)(v->label));
         if (s && s[0]) {
@@ -2144,9 +2208,9 @@ char * coltoa(int col) {
 }
 
 /*
- *    To make list elements come out in the same order
- *    they were entered, we must do a depth-first eval
- *    of the ELIST tree
+ * To make list elements come out in the same order
+ * they were entered, we must do a depth-first eval
+ * of the ELIST tree
  */
 static void decompile_list(struct enode *p) {
     if (!p) return;
@@ -2184,8 +2248,10 @@ void decompile(register struct enode *e, int priority) {
             decompile(e->e.o.left, 30);
             break;
     case 'm':
+            if (priority != 0) line[linelim++] = '(';
             line[linelim++] = '-';
             decompile(e->e.o.left, 30);
+            if (priority != 0) line[linelim++] = ')';
             break;
     case '!':
             line[linelim++] = '!';
@@ -2270,6 +2336,9 @@ void decompile(register struct enode *e, int priority) {
     case NVAL:  two_arg("@nval(", e); break;
     case SVAL:  two_arg("@sval(", e); break;
     case EXT:   two_arg("@ext(", e); break;
+#ifdef XLUA
+    case LUA:   two_arg("@lua(", e); break;
+#endif
     case SUBSTR:  three_arg("@substr(", e); break;
     case REPLACE: three_arg("@replace(", e); break;
     case STINDEX: index_arg("@stindex", e); break;
@@ -2560,18 +2629,18 @@ int dateformat(struct ent *v1, struct ent *v2, char * fmt) {
 }
 
 #ifdef RINT
-/*    round-to-even, also known as ``banker's rounding''.
-    With round-to-even, a number exactly halfway between two values is
-    rounded to whichever is even; e.g. rnd(0.5)=0, rnd(1.5)=2,
-    rnd(2.5)=2, rnd(3.5)=4.  This is the default rounding mode for
-    IEEE floating point, for good reason: it has better numeric
-    properties.  For example, if X+Y is an integer,
-    then X+Y = rnd(X)+rnd(Y) with round-to-even,
-    but not always with sc's rounding (which is
-    round-to-positive-infinity).  I ran into this problem when trying to
-    split interest in an account to two people fairly.
-*/
-
+/*
+ * round-to-even, also known as ``banker's rounding''.
+ * With round-to-even, a number exactly halfway between two values is
+ * rounded to whichever is even; e.g. rnd(0.5)=0, rnd(1.5)=2,
+ * rnd(2.5)=2, rnd(3.5)=4.  This is the default rounding mode for
+ * IEEE floating point, for good reason: it has better numeric
+ * properties.  For example, if X+Y is an integer,
+ * then X+Y = rnd(X)+rnd(Y) with round-to-even,
+ * but not always with sc's rounding (which is
+ * round-to-positive-infinity).  I ran into this problem when trying to
+ * split interest in an account to two people fairly.
+ */
 double rint(double d) {
     /* as sent */
     double fl = floor(d), fr = d-fl;

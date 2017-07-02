@@ -6,7 +6,7 @@
 #include "macros.h"
 #include "sc.h"
 #include "cmds.h"
-#include "color.h"
+#include "tui.h"
 #include "conf.h"
 #include "lex.h"
 #include "utils/string.h"
@@ -17,16 +17,21 @@
 #include <libxml/tree.h>
 #include "xlsx.h"
 
-// ------------------------------------------------------------------
-// requires libzip-dev
-// requires libxml2-dev
-// for building: gcc -lzip -lxml2 -I/usr/include/libxml2 xlsx.c
-// ------------------------------------------------------------------
+/*
+ * xlsx import requires:
+ * requires libzip-dev
+ * requires libxml2-dev
+ *
+ * xlsx export requires
+ * libxlsxwriter
+ */
 
 
-// this functions takes the DOM of the sharedStrings file
-// and based on a position, it returns the according string
-// note that 0 is the first string.
+/*
+ * this functions takes the DOM of the sharedStrings file
+ * and based on a position, it returns the according string
+ * note that 0 is the first string.
+ */
 char * get_xlsx_string(xmlDocPtr doc, int pos) {
     xmlNode * cur_node = xmlDocGetRootElement(doc)->xmlChildrenNode;
     xmlNode * father;
@@ -57,9 +62,11 @@ char * get_xlsx_string(xmlDocPtr doc, int pos) {
     return result;
 }
 
-// this functions takes the DOM of the styles file
-// and based on a position, it returns the according numFmtId
-// IMPORTANT: note that 0 is the first "xf".
+/*
+ * this functions takes the DOM of the styles file
+ * and based on a position, it returns the according numFmtId
+ * IMPORTANT: note that 0 is the first "xf".
+ */
 char * get_xlsx_styles(xmlDocPtr doc_styles, int pos) {
     // we go forward up to styles data
     xmlNode * cur_node = xmlDocGetRootElement(doc_styles)->xmlChildrenNode;
@@ -385,7 +392,186 @@ int open_xlsx(char * fname, char * encoding) {
     }
 
     auto_justify(0, maxcols, DEFWIDTH);
-    deleterow();
+    deleterow(currow, 1);
     return 0;
+}
+#endif
+
+#ifdef XLSX_EXPORT
+#include "xlsxwriter.h"
+int export_xlsx(char * filename, int r0, int c0, int rn, int cn) {
+    int row, col;
+    register struct ent ** pp;
+
+    lxw_workbook  * workbook  = workbook_new(filename);
+    lxw_worksheet * worksheet = workbook_add_worksheet(workbook, NULL);
+
+    int bkp_currow = currow;
+    currow = 0;
+    insert_row(0); //add a row so that scim formulas apply to excel
+
+    for (row = r0; row <= rn+1; row++)
+        for (pp = ATBL(tbl, row, col = c0); col <= cn; col++, pp++)
+            if (*pp) {
+                // Check format here
+                lxw_format * format = workbook_add_format(workbook);
+
+                // handle alignment
+                if ((*pp)->label && (*pp)->flags & is_label)          // center align
+                    format_set_align(format, LXW_ALIGN_CENTER);
+                else if ((*pp)->label && (*pp)->flags & is_leftflush) // left align
+                    format_set_align(format, LXW_ALIGN_LEFT);
+                else if ((*pp)->label)                                // right align
+                    format_set_align(format, LXW_ALIGN_RIGHT);
+
+                // handle bold and underline
+                if ((*pp)->ucolor != NULL && (*pp)->ucolor->bold)
+                    format_set_bold(format);
+                else if ((*pp)->ucolor != NULL && (*pp)->ucolor->underline)
+                    format_set_underline(format, LXW_UNDERLINE_SINGLE);
+
+                // handle fg color
+                if ((*pp)->ucolor != NULL && (*pp)->ucolor->fg) {
+                    int fgcolor;
+                    switch ((*pp)->ucolor->fg) {
+                        case BLACK:
+                            fgcolor = LXW_COLOR_BLACK;
+                            break;
+                        case RED:
+                            fgcolor = LXW_COLOR_RED;
+                            break;
+                        case GREEN:
+                            fgcolor = LXW_COLOR_GREEN;
+                            break;
+                        case YELLOW:
+                            fgcolor = LXW_COLOR_YELLOW;
+                            break;
+                        case BLUE:
+                            fgcolor = LXW_COLOR_BLUE;
+                            break;
+                        case MAGENTA:
+                            fgcolor = LXW_COLOR_MAGENTA;
+                            break;
+                        case CYAN:
+                            fgcolor = LXW_COLOR_CYAN;
+                            break;
+                        case WHITE:
+                            fgcolor = LXW_COLOR_WHITE;
+                            break;
+                    }
+                    format_set_font_color(format, fgcolor);
+                }
+
+                // handle bg color
+                if ((*pp)->ucolor != NULL && (*pp)->ucolor->bg) {
+                    int bgcolor;
+                    switch ((*pp)->ucolor->bg) {
+                        case BLACK:
+                            bgcolor = LXW_COLOR_BLACK;
+                            break;
+                        case RED:
+                            bgcolor = LXW_COLOR_RED;
+                            break;
+                        case GREEN:
+                            bgcolor = LXW_COLOR_GREEN;
+                            break;
+                        case YELLOW:
+                            bgcolor = LXW_COLOR_YELLOW;
+                            break;
+                        case BLUE:
+                            bgcolor = LXW_COLOR_BLUE;
+                            break;
+                        case MAGENTA:
+                            bgcolor = LXW_COLOR_MAGENTA;
+                            break;
+                        case CYAN:
+                            bgcolor = LXW_COLOR_CYAN;
+                            break;
+                        case WHITE:
+                            bgcolor = LXW_COLOR_WHITE;
+                            break;
+                    }
+                    format_set_bg_color(format, bgcolor);
+                }
+
+                // dateformat
+                if ((*pp) && (*pp)->format && (*pp)->format[0] == 'd') {
+                    char sc_format[BUFFERSIZE];
+                    char * st = NULL;
+                    strcpy(sc_format, &((*pp)->format[1]));
+
+                    st = str_replace(sc_format, "%Y", "yyyy");
+                    strcpy(sc_format, st);
+                    free(st);
+                    st = str_replace(sc_format, "%y", "yy");
+                    strcpy(sc_format, st);
+                    free(st);
+                    st = str_replace(sc_format, "%m", "mm");
+                    strcpy(sc_format, st);
+                    free(st);
+                    st = str_replace(sc_format, "%d", "dd");
+                    strcpy(sc_format, st);
+                    free(st);
+                    format_set_num_format(format, sc_format);
+                    worksheet_write_number(worksheet, row-1, col, (((*pp)->v + atoi(get_conf_value("tm_gmtoff"))) / 86400 + 25569) , format);
+
+                // formula
+                } else if ((*pp) && (*pp)->expr && atoi(get_conf_value("xlsx_readformulas")))  {
+                    linelim = 0;
+                    editexp((*pp)->row, (*pp)->col);
+                    linelim = -1;
+
+                    char * strf;
+                    char formula[BUFFERSIZE];
+                    strcpy(formula, line);
+
+                    strf = str_replace(formula, "@count","count");
+                    strcpy(formula, strf);
+                    free(strf);
+
+                    strf = str_replace(formula, "@sum","sum");
+                    strcpy(formula, strf);
+                    free(strf);
+
+                    strf = str_replace(formula, "@prod","product");
+                    strcpy(formula, strf);
+                    free(strf);
+
+                    strf = str_replace(formula, "@avg","average");
+                    strcpy(formula, strf);
+                    free(strf);
+
+                    strf = str_replace(formula, "@min","min");
+                    strcpy(formula, strf);
+                    free(strf);
+
+                    strf = str_replace(formula, "@max","max");
+                    strcpy(formula, strf);
+                    free(strf);
+
+                    strf = str_replace(formula, "@abs","abs");
+                    strcpy(formula, strf);
+                    free(strf);
+
+                    strf = str_replace(formula, "@stddev","stdev");
+                    strcpy(formula, strf);
+                    free(strf);
+
+                    add_char(formula, '=', 0);
+                    worksheet_write_formula(worksheet, row-1, col, formula, NULL);
+
+                // If a numeric value exists
+                } else if ( (*pp)->flags & is_valid) {
+                    worksheet_write_number(worksheet, row-1, col, (*pp)->v, format);
+
+                } else if ((*pp)->label) {
+                    worksheet_write_string(worksheet, row-1, col, (*pp)->label, format);
+                }
+                /* TODO: handle hidden rows and columns? */
+            }
+    int_deleterow(currow, 1); /* delete the added row */
+    currow = bkp_currow;
+
+    return workbook_close(workbook);
 }
 #endif

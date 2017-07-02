@@ -2,6 +2,7 @@ struct undo {
     struct undo * p_ant;
     struct ent * added;
     struct ent * removed;
+    struct ent * aux_ents;          // add e_new to beginning of list
     struct undo_range_shift * range_shift;
     struct undo_cols_format * cols_format;
     struct undo * p_sig;
@@ -49,4 +50,5 @@ void clear_undo_list ();
 void clear_from_current_pos();
 int len_undo_list();
 void free_undo_node(struct undo * ul);
-void dismiss_undo_item();
+void dismiss_undo_item(struct undo * ul);
+struct ent * add_undo_aux_ent(struct ent * e);

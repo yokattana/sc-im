@@ -9,16 +9,20 @@
 #include "xls.h"
 #include "utils/string.h"
 
-// xls.h is part of libxls. make sure its installed and headers are in path.
-// build must be done with '-lxlsreader'
+/*
+ * xls.h is part of libxls. make sure its installed and headers are in path.
+ * build must be done with '-lxlsreader'
+ */
 #ifdef XLS
 #include <xls.h>
 #endif
 
-// this functions loads an excel file into tbl.
-// As SC-IM still does not handle multiple sheets,
-// if the excel file has multiple sheets, only the first one is read.
-// this function returns -1 in case of error
+/*
+ * this functions loads an excel file into tbl.
+ * As SC-IM still does not handle multiple sheets,
+ * if the excel file has multiple sheets, only the first one is read.
+ * this function returns -1 in case of error
+ */
 int open_xls(char * fname, char * encoding) {
 #ifdef XLS
 
@@ -59,8 +63,7 @@ int open_xls(char * fname, char * encoding) {
     for (r = 0; r <= pWS->rows.lastrow; r++) { // rows
         for (c = 0; c <= pWS->rows.lastcol; c++) { // cols
             xlsCell * cell = xls_cell(pWS, r, c);
-            //if ((! cell) || (cell->isHidden)) continue;
-            if ((! cell) || (cell->ishiden)) continue; // Unfortunately libxls spells this "ishiden"
+            if ((! cell) || (cell->isHidden)) continue;
 
             // TODO enable rowspan ?
             //if (cell->rowspan > 1) continue;
@@ -118,11 +121,10 @@ int open_xls(char * fname, char * encoding) {
         }
     }
     xls_close_WS(pWS);
-    xls_close(pWB);
+    xls_close_WB(pWB);
     auto_justify(0, maxcols, DEFWIDTH);
     return 0;
 #else
     return -1;
 #endif
-
 }
