@@ -9,3 +9,4 @@ matrix:
 
   ## Mac
   - os: osx
+    script: cd src && PATH=/bin:/usr/bin make
